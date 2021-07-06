@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+setup.cfg
+src/peakbot.egg-info/PKG-INFO
+src/peakbot.egg-info/SOURCES.txt
+src/peakbot.egg-info/dependency_links.txt
+src/peakbot.egg-info/top_level.txt

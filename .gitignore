@@ -1,0 +1,5 @@
+# python package directories
+build/
+dist/
+__pycache__/
+.ipynb_checkpoints/

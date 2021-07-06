@@ -1,0 +1,20 @@
+Metadata-Version: 2.1
+Name: peakbot
+Version: 0.4.6
+Summary: A machine-learning CNN model for peak picking in profile mode LC-HRMS data
+Home-page: https://github.com/TODO
+Author: Christoph Bueschl
+Author-email: christoph.bueschl@univie.ac.at
+License: UNKNOWN
+Project-URL: Bug Tracker, https://github.com/pypa/sampleproject/issues
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+
+# PeakBot
+
+PeakBot is a machine-learning CNN model for chromatographic peak picking in 2d profile mode LC-HRMS data.
+

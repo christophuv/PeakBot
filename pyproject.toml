@@ -1,0 +1,15 @@
+[tool.flit.metadata]
+module = "peakbot"
+author = "Christoph Bueschl, Juergen Zanghellini"
+author-email = "christoph.bueschl [the little e-mail-symbol] univie.ac.at"
+
+[build-system]
+requires-python=">=3.9.5"
+requires = [
+    "numpy>=1.19.5",
+    "scipy>=1.7.0",
+    "tensorflow>=2.5.0",
+    "numba>=0.53.1",
+    "tqdm>=4.61.1"
+]
+build-backend = "setuptools.build_meta"
