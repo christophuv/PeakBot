@@ -98,22 +98,9 @@ def dataGenerator(folder, instancePrefix = None, verbose=False):
     ite = 0
     while os.path.isfile("%s/%s%d.pickle"%(folder, instancePrefix, ite)):
             
-        l = pickle.load(open("%s/%s%d.pickle"%(folder, instancePrefix, ite), "rb"))
-        
-        l["LCHRMSArea"] = np.expand_dims(l["LCHRMSArea"], len(l["LCHRMSArea"].shape))
-        for j in range(l["LCHRMSArea"].shape[0]):
-            m = np.max(l["LCHRMSArea"][j,:,:,:])
-            if m > 0:
-                l["LCHRMSArea"][j,:,:,:] = l["LCHRMSArea"][j,:,:,:] / m
-        
-        yield {"LCHRMSArea"      : l["LCHRMSArea"      ],
-               "peakType"        : l["peakType"        ],
-               "areaRTs"         : l["areaRTs"         ], 
-               "areaMZs"         : l["areaMZs"         ], 
-               "center"          : l["center"          ], 
-               "box"             : l["box"             ], 
-               "chromatogramFile": l["chromatogramFile"]}
-        
+        l = pickle.load(open("%s/%s%d.pickle"%(folder, instancePrefix, ite), "rb"))        
+        assert all(np.amax(l["LCHRMSArea"], (1,2)) == 1), "LCHRMSarea is not scaled to a maximum of 1 '%s'"%(str(np.amax(l["LCHRMSArea"], (1,2))))
+        yield l        
         ite += 1
         
 def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
@@ -129,12 +116,12 @@ def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
                     print("  | .. gt: %18s numpy: %30s %10s"%(k, v.shape, v.dtype))
                 else:
                     print("  | .. gt: %18s  type:  %40s"%(k, type(v)))
-            print("")
+            print("  |")
         
         if newBatchSize is not None:
             
             for k in l.keys():
-                if isinstance(l[k], np.ndarray) and len(l[k].shape)==2:
+                if   isinstance(l[k], np.ndarray) and len(l[k].shape)==2:
                     l[k] = l[k][0:newBatchSize,:]
 
                 elif isinstance(l[k], np.ndarray) and len(l[k].shape)==3:
@@ -149,6 +136,7 @@ def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
         yield {"LCHRMSArea": l["LCHRMSArea"]}, {"peakType"        : l["peakType"        ], 
                                                 "center"          : l["center"          ], 
                                                 "box"             : l["box"             ]}
+        l = next(datGen)
         ite += 1   
         
 def modelAdapterTestGenerator(datGen, newBatchSize = None, verbose=False):
@@ -226,7 +214,7 @@ def convertGeneratorToPlain(gen, numIters=1):
 ## modified from https://stackoverflow.com/a/47738812
 ## https://github.com/LucaCappelletti94/keras_validation_sets
 class AdditionalValidationSets(tf.keras.callbacks.Callback):
-    def __init__(self, validation_sets, verbose=0, batch_size=None, steps=None, everyNthEpoch=1):
+    def __init__(self, logDir, validation_sets=None, verbose=0, batch_size=None, steps=None, everyNthEpoch=1):
         """
         :param validation_sets:
         a list of 3-tuples (validation_data, validation_targets, validation_set_name)
@@ -237,6 +225,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
         batch size to be used when evaluating on the additional datasets
         """
         super(AdditionalValidationSets, self).__init__()
+        self.logDir = logDir
         self.validation_sets = []
         if validation_sets is not None:
             for validation_set in validation_sets:
@@ -248,7 +237,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
         self.lastEpochNum = 0
         self.history = []
     
-    def addValidationSet(validation_set):
+    def addValidationSet(self, validation_set):
         if len(validation_set) not in [3, 4]:
             raise ValueError()
         self.validation_sets.append(validation_set)
@@ -260,7 +249,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
         hist = None
         if epoch%self.everyNthEpoch == 0 or ignoreEpoch:
             hist={}
-            if self.verbose: print("  | .. on_epoch_end: Additional test datasets (epoch %d): "%(epoch+1), end="")
+            if self.verbose: print("Additional test datasets (epoch %d): "%(epoch+1), end="")
             add = False
             # evaluate on the additional validation sets
             for validation_set in self.validation_sets:
@@ -283,7 +272,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                                               batch_size=self.batch_size,
                                               steps=self.steps)
                 
-                file_writer = tf.summary.create_file_writer(logDir + "/" + validation_set_name)
+                file_writer = tf.summary.create_file_writer(self.logDir + "/" + validation_set_name)
                 for metric, result in zip(self.model.metrics_names,results):
                     valuename = "epoch_" + metric
                     with file_writer.as_default():
@@ -302,6 +291,8 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
     
 class PeakBot():
     def __init__(self, name, batchSize = None, rts = None, mzs = None, numClasses = None, version = None):
+        super(PeakBot, self).__init__()
+        
         if batchSize is None:
             batchSize = Config.BATCHSIZE
         if rts is None:
@@ -365,29 +356,6 @@ class PeakBot():
         peakType    = tf.keras.layers.Dense(self.numClasses, name="peakType", activation="sigmoid")(fx)
         center      = tf.keras.layers.Dense(              2, name="center"                        )(fx)
         box         = tf.keras.layers.Dense(              4, name="box"                           )(fx)
-      
-        ## Decoder
-        for i in range(len(uNetLayerSizes)-1, -1, -1):
-            x = tf.keras.layers.UpSampling2D((2,2))(x)
-            x = tf.concat([x, cLayers[i]], axis=3)
-            x = tf.keras.layers.ZeroPadding2D(padding=2)(x) 
-            x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (5,5), use_bias=True)(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.Activation("relu")(x)
-            
-            x = tf.keras.layers.Dropout(dropOutRate)(x)
-            x = tf.keras.layers.ZeroPadding2D(padding=1)(x) 
-            x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (3,3), use_bias=True)(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            if i > 0:
-                x = tf.keras.layers.Add()([x, cLayers[i]])
-            x = tf.keras.layers.Activation("relu")(x)
-                
-        x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
-        x = tf.keras.layers.Conv2D(1, (3,3))(x)
-        
-        x = tf.keras.layers.Activation("sigmoid", name="mask")(x)
-        mask = x
             
         if verbose: 
             print("  | .. Intermediate layer")
@@ -398,11 +366,10 @@ class PeakBot():
             print("  | .. .. peak        is", peakType)
             print("  | .. .. center      is", center)
             print("  | .. .. box         is", box)
-            print("  | .. .. mask        is", mask)
             print("  | .. ")
             print("  | ")
 
-        self.model = tf.keras.models.Model(input_, [peakType, center, box])#, mask])
+        self.model = tf.keras.models.Model(input_, [peakType, center, box])
     
     @timeit
     def compileModel(self, learningRate = Config.LEARNINGRATESTART):
@@ -413,19 +380,16 @@ class PeakBot():
                         "peakType"   : "CategoricalCrossentropy",
                         "center"     : tf.keras.losses.Huber(),
                         "box"        : tf.keras.losses.Huber(),
-                        #"mask"       : "BinaryCrossentropy",
                       },
             metrics      = {
                         "peakType" : ["categorical_accuracy"],
                         "center"   : [],
                         "box"      : [batch_iou],
-                        #"mask"     : [],
                       },
             loss_weights = {
-                        "peakType"   : 32,
-                        "center"     : 32,
-                        "box"        : 32,
-                        #"mask"       : 1,
+                        "peakType"   : 1,
+                        "center"     : 1,
+                        "box"        : 1,
                       }
         )
     
@@ -489,9 +453,11 @@ class PeakBot():
 def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInstancesPath = None, addValidationInstances = None, everyNthEpoch = 15, verbose = False):
     tic("pbTrainNewModel")
 
+    ## name new model
     if modelName is None:
         modelName = "%s%s__%s"%(Config.NAME, Config.VERSION, uuid.uuid4().hex[0:6])
         
+    ## log information to folder
     logDir = logBaseDir + "/" + modelName
     logger = tf.keras.callbacks.CSVLogger('%s/clog.tsv'%(logDir), separator="\t")
     
@@ -502,6 +468,7 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         print(Config.getAsStringFancy().replace(";", "\n"))
         print("  |")            
 
+    ## define learning rate schedule
     def lrSchedule(epoch, lr):
         if (epoch + 1) % Config.LEARNINGRATEDECREASEAFTERSTEPS == 0:
             lr *= Config.LEARNINGRATEMULTIPLIER
@@ -510,28 +477,40 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         return max(lr, Config.LEARNINGRATEMINVALUE)
     lrScheduler = tf.keras.callbacks.LearningRateScheduler(lrSchedule, verbose=False)
 
+    ## create generators for training data (and validation data if available) 
     datGenTrain = modelAdapterTrainGenerator(dataGenerator(trainInstancesPath, verbose = verbose), newBatchSize = Config.BATCHSIZE, verbose = verbose)
     datGenVal   = None
     if valInstancesPath is not None:
         datGenVal = modelAdapterTestGenerator(dataGenerator(valInstancesPath  , verbose = verbose), newBatchSize = Config.BATCHSIZE, verbose = verbose)
         datGenVal = tf.data.Dataset.from_tensors(next(datGenVal))
 
-    valDS = AdditionalValidationSets(None, 
+    ## add additional validation datasets to monitor model performance during the trainging process
+    valDS = AdditionalValidationSets(logDir, 
                                      batch_size=Config.BATCHSIZE,
                                      everyNthEpoch = everyNthEpoch, 
                                      verbose = verbose)
     if addValidationInstances is not None:
         for valInstance in addValidationInstances:
-            datGen  = modelAdapterTrainGen(dataGenerator(valInstance["folder"]), 
-                                         newBatchSize = Config.BATCHSIZE)
-            x,y = convertGeneratorToPlain(datGen, 1)
-            valDS.addValidationSet((x,y, valInstance["name"]))
+            x,y = None, None
+            if "folder" in valInstance.keys():
+                datGen  = modelAdapterTestGenerator(dataGenerator(valInstance["folder"]), 
+                                                    newBatchSize = Config.BATCHSIZE)
+                numBatches = valInstance["numBatches"] if "numBatches" in valInstance.keys() else 1
+                x,y = convertGeneratorToPlain(datGen, numBatches)
+            if "x" in valInstance.keys():
+                x = valInstance["x"]
+                y = valInstance["y"]
+            if x is not None and y is not None and "name" in valInstance.keys():
+                valDS.addValidationSet((x,y, valInstance["name"]))
+            else:
+                raise RuntimeError("Unknonw additional validation dataset")
         
-        
+    ## instanciate a new model and set its parameters
     pb = PeakBot(modelName, batchSize = Config.BATCHSIZE, rts = Config.RTSLICES, mzs = Config.MZSLICES)
     pb.buildTFModel(dropOutRate = Config.DROPOUT, uNetLayerSizes=Config.UNETLAYERSIZES, verbose = verbose)
     pb.compileModel(learningRate = Config.LEARNINGRATESTART)
     
+    ## train the model
     history = pb.train(
         datTrain = datGenTrain, 
         datVal   = datGenVal, 
@@ -545,14 +524,14 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         verbose = verbose * 2
     )
     
-    
+    ## save metrices of the training process in a user-convenient format (pandas table)
     metricesAddValDS = pd.DataFrame(columns=["model", "set", "metric", "value"]);
     if addValidationInstances is not None:
-        hist = addValDatasets.history[-1]
+        hist = valDS.history[-1]
         for valInstance in addValidationInstances:
     
             se = valInstance["name"]
-            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "mask_loss", "peakType_categorical_accuracy", "box_batch_iou"]:
+            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "box_batch_iou"]:
                 val = hist[se + "_" + metric]
                 newRow = pd.Series({"model": modelName, "set": se, "metric": metric, "value": val})
                 metricesAddValDS = metricesAddValDS.append(newRow, ignore_index=True)
@@ -709,10 +688,6 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
         areaRTs  = l["areaRTs"]
         areaMZs  = l["areaMZs"]
         lcmsArea = np.expand_dims(lcmsArea, len(lcmsArea.shape))
-        for j in range(lcmsArea.shape[0]):
-            m = np.max(lcmsArea[j,:,:,:])
-            if m > 0:
-                lcmsArea[j,:,:,:] = lcmsArea[j,:,:,:] / m
         
         pred = None
         if model is not None:
@@ -783,6 +758,7 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
             prt, pmz = -1, -1
             prtstart, prtend, pmzstart, pmzend = -1, -1, -1, -1
             if pred is not None:
+                print(pred[0][j,:], pred[1][j,:], pred[2][j,:])
                 pisFullPeak, pisPartPeak, phasCoElutionLeft, phasCoElutionRight, pisBackground, pisWall = [bool(i) for i in np.squeeze(np.eye(6)[np.argmax(np.array(pred[0][j,:])).reshape(-1)])]
                 prtInd, pmzInd = [round(i) for i in pred[1][j,:]]
                 prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]                    

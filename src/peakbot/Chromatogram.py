@@ -20,7 +20,7 @@ class Chromatogram():
         self.msInstruments = {}
         
     
-    def convertChromatogramToNumpyObjects(self, verbose=True):
+    def convertChromatogramToNumpyObjects(self, verbose=True, verbosePrefix=""):
         peaksTotal = 0
         maxPeaksPerScan = 0
         minMZ, maxMZ = 1E8, 0
@@ -53,14 +53,14 @@ class Chromatogram():
         
 
         if verbose:
-            print("  | .. there are %d scans in the file"%(len(self.MS1_list)))
-            print("  | .. there are %d peaks in the file"%(peaksTotal))
-            print("  | .. the smallest and largest retention time difference of scans are %.2f and %.2f seconds"%(np.min(s), np.max(s)))
-            print("  | .. the mean retention time difference of scans is %.2f with a standard deviation of %.5f"%(np.mean(s), np.std(s)))
-            print("  | .. the highest number of peaks in a scan is %d"%(maxPeaksPerScan))
-            print("  | .. the smallest difference between two signals is %g"%(minDiff))
-            print("  | .. the smallest and largest mz values are %g and %g"%(minMZ, maxMZ))
-            print("  | .. generating two numpy arrays with %d x %d elements"%(mzs.shape[0], ints.shape[1]))
+            print(verbosePrefix, "  | .. there are %d scans in the file"%(len(self.MS1_list)), sep="")
+            print(verbosePrefix, "  | .. there are %d peaks in the file"%(peaksTotal), sep="")
+            print(verbosePrefix, "  | .. the smallest and largest retention time difference of scans are %.2f and %.2f seconds"%(np.min(s), np.max(s)), sep="")
+            print(verbosePrefix, "  | .. the mean retention time difference of scans is %.2f with a standard deviation of %.5f"%(np.mean(s), np.std(s)), sep="")
+            print(verbosePrefix, "  | .. the highest number of peaks in a scan is %d"%(maxPeaksPerScan), sep="")
+            print(verbosePrefix, "  | .. the smallest difference between two signals is %g"%(minDiff), sep="")
+            print(verbosePrefix, "  | .. the smallest and largest mz values are %g and %g"%(minMZ, maxMZ), sep="")
+            print(verbosePrefix, "  | .. generating two numpy arrays with %d x %d elements"%(mzs.shape[0], ints.shape[1]), sep="")
 
         return mzs, ints, times, peaksCount
         

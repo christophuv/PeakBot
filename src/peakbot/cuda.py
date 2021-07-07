@@ -1,5 +1,5 @@
 import peakbot.core
-from peakbot.core import tic, toc, tocP, tocAddStat, addFunctionRuntime, timeit, printRunTimesSummary
+from peakbot.core import tic, toc, tocP, tocAddStat, addFunctionRuntime, timeit, printRunTimesSummary, TabLog
 
 import math
 import pickle
@@ -173,11 +173,9 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
             signalProps[j,3] = mzs[scanInd, peakInd]
             signalProps[j,4] = ints[scanInd, peakInd]
     global getPropsOfSignals
-    getPropsOfSignals = cuda.jit()(_getPropsOfSignals)
+    getPropsOfSignals = cuda.jit()(_getPropsOfSignals)      
 
-    def _gradientDescendMZProfile(mzs, ints, times, peaksCount, signalProps, maxmzDiffPPMAdjacentProfileSignal):
-        scanInd = int(signalProps[0])
-        peakInd = int(signalProps[1])
+    def _gradientDescendMZProfile(mzs, ints, times, peaksCount, scanInd, peakInd, maxmzDiffPPMAdjacentProfileSignal):
         mz = mzs[scanInd, peakInd]
 
         ## Gradient descend find borders of mz profile peak
@@ -274,7 +272,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         lInd = cuda.grid(1)
         lLen = cuda.gridsize(1)
         for j in range(lInd, signalsProps.shape[0], lLen):
-            bestPPMFit = _gradientDescendMZProfile_kernel(mzs, ints, times, peaksCount, signalsProps[j,:], maxmzDiffPPMAdjacentProfileSignal)
+            bestPPMFit = _gradientDescendMZProfile_kernel(mzs, ints, times, peaksCount, int(signalsProps[j,0]), int(signalsProps[j,1]), maxmzDiffPPMAdjacentProfileSignal)
             signalsProps[j, 5] = bestPPMFit
 
             ppmDifferenceAdjacentScans = _adjacentMZSignalsPPMDifference_kernel(mzs, ints, times, peaksCount, signalsProps[j,:], maxmzDiffPPMAdjacentProfileSignal)
@@ -438,7 +436,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
     global joinSplitPeaks
     joinSplitPeaks = cuda.jit()(_joinSplitPeaks)
     
-    def _renovateArea(mzs, ints, times, peaksCount, refRT, refMZ, refSupports, newData, indexToSave, areaTimes, maxOffset, setOrAdd, intensityMultiplier):
+    def _renovateArea(mzs, ints, times, peaksCount, refRT, refMZ, refSupports, newData, indexToSave, areaTimes, maxOffset):
         
         maxVal = 0 
         
@@ -489,12 +487,8 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
                         else:
                             newInt = ints[rtInd, leftmzInd] + (ints[rtInd, rightmzInd]-ints[rtInd, leftmzInd])/(mzs[rtInd, rightmzInd]-mzs[rtInd, leftmzInd])*(supMZ-mzs[rtInd, leftmzInd])
 
-                        newInt = newInt * intensityMultiplier
                         maxVal = max(maxVal, newInt)
-                        if setOrAdd == 0:
-                            newData[indexToSave, rtOffInd, supInd] = newInt
-                        elif setOrAdd == 1:
-                            newData[indexToSave, rtOffInd, supInd] = newData[indexToSave, rtOffInd, supInd] + newInt
+                        newData[indexToSave, rtOffInd, supInd] = newInt
         return maxVal
     global _renovateArea_kernel
     _renovateArea_kernel = cuda.jit(device=True)(_renovateArea)
@@ -511,26 +505,29 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
     getBestMatch_kernel = cuda.jit(device=True)(_getBestMatch)
     
     def _renovatePeaksToArea(mzs, ints, times, peaksCount, signalsProps, newData, areaRTs, areaMZs, gdProps, fromInd, toInd):
-        supports = cuda.local.array(shape = mzSlices, dtype=numba.float32)
         areaTimes = cuda.local.array(shape = rtSlices, dtype=numba.float32)
+        supports = cuda.local.array(shape = mzSlices, dtype=numba.float32)
         
         lInd = cuda.grid(1)
         lLen = cuda.gridsize(1)
         
         for instanceInd in range(lInd, signalsProps.shape[0], lLen):
             if fromInd <= instanceInd < toInd:
-                ppmdev = signalsProps[instanceInd, 5]
-                refRT = signalsProps[instanceInd, 2]
-                refMZ = signalsProps[instanceInd, 3]
+                cInstance = instanceInd - fromInd
+                ppmdev    = signalsProps[instanceInd, 5]
+                refRT     = signalsProps[instanceInd, 2]
+                refMZ     = signalsProps[instanceInd, 3]
   
                 for y in range(mzSlices):
                     supports[y] = 0
                     supports[y] = refMZ*(1. + (-3 + 6*y/(mzSlices-1))*ppmdev/1E6)
                     areaMZs[instanceInd - fromInd, y] = supports[y]                  
-                _renovateArea_kernel(mzs, ints, times, peaksCount, refRT, refMZ, supports, newData, instanceInd - fromInd, areaTimes, (supports[1]-supports[0])*8, 0, 1)
-
-                for x in range(areaTimes.shape[0]):
+                maxVal = _renovateArea_kernel(mzs, ints, times, peaksCount, refRT, refMZ, supports, newData, cInstance, areaTimes, (supports[1]-supports[0])*8)
+                
+                for x in range(rtSlices):
                     areaRTs[instanceInd - fromInd, x] = areaTimes[x]
+                    for y in range(mzSlices):
+                        newData[cInstance, x, y] /= maxVal                    
                 
                 gdProps[instanceInd - fromInd, 0] = getBestMatch_kernel(areaTimes, refRT)
                 gdProps[instanceInd - fromInd, 1] = getBestMatch_kernel(supports , refMZ)
@@ -544,13 +541,13 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
        
 
 @timeit
-def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, interScanMaxSimilarSignalDifferencePPM, RTpeakWidth, 
+def preProcessChromatogram(mzxml, fileIdentifier, intraScanMaxAdjacentSignalDifferencePPM, interScanMaxSimilarSignalDifferencePPM, RTpeakWidth, 
                            minApexBorderRatio, minIntensity, exportPath, exportLocalMaxima = "peak-like-shape", 
                            blockdim = (32, 8), griddim = (64, 4),
                            rtSlices = None, mzSlices = None, batchSize = None, 
                            eicWindowPlusMinus = 30, SavitzkyGolayWindowPlusMinus = 5,
                            instancePrefix = None, 
-                           verbose = True):    
+                           verbose = True, verbosePrefix = ""):
     if rtSlices is None:
         rtSlices = peakbot.Config.RTSLICES
     if mzSlices is None:
@@ -562,29 +559,30 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     
     tic("preprocessing")
     if verbose: 
-        print("Preprocessing chromatogram with CUDA (GPU-based calculations)")
-        print("  | Parameters")
-        print("  | .. intraScanMaxAdjacentSignalDifferencePPM:", intraScanMaxAdjacentSignalDifferencePPM)
-        print("  | .. interScanMaxSimilarSignalDifferencePPM:", interScanMaxSimilarSignalDifferencePPM)
-        print("  | .. RTpeakWidth:", str(RTpeakWidth))
-        print("  | .. minApexBorderRatio:", minApexBorderRatio)
-        print("  | .. minIntensity:", minIntensity)
-        print("  | .. device:", str(cuda.get_current_device().name))
-        print("  | .. blockdim", blockdim, "griddim", griddim)
-        print("  |")
+        print(verbosePrefix, "Preprocessing chromatogram with CUDA (GPU-based calculations)", sep="")
+        print(verbosePrefix, "  | Parameters", sep="")
+        print(verbosePrefix, "  | .. intraScanMaxAdjacentSignalDifferencePPM:", intraScanMaxAdjacentSignalDifferencePPM, sep="")
+        print(verbosePrefix, "  | .. interScanMaxSimilarSignalDifferencePPM:", interScanMaxSimilarSignalDifferencePPM, sep="")
+        print(verbosePrefix, "  | .. RTpeakWidth:", str(RTpeakWidth), sep="")
+        print(verbosePrefix, "  | .. minApexBorderRatio:", minApexBorderRatio, sep="")
+        print(verbosePrefix, "  | .. minIntensity:", minIntensity, sep="")
+        print(verbosePrefix, "  | .. device:", str(cuda.get_current_device().name), sep="")
+        print(verbosePrefix, "  | .. blockdim", blockdim, "griddim", griddim, sep="")
+        print(verbosePrefix, "  |", sep="")
 
     initializeCUDAFunctions(rtSlices, mzSlices, eicWindowPlusMinus, SavitzkyGolayWindowPlusMinus)
     cuda.synchronize()
     
     if verbose:
-        print("  | Converted to numpy objects")
+        print(verbosePrefix, "  | Converted to numpy objects", sep="")
     tic()
-    mzs, ints, times, peaksCount = mzxml.convertChromatogramToNumpyObjects(verbose = verbose)
+    mzs, ints, times, peaksCount = mzxml.convertChromatogramToNumpyObjects(verbose = verbose, verbosePrefix = verbosePrefix)
     if verbose:
-        print("  | .. size of objects is %5.1f Mb"%(mzs.nbytes/1E6 + ints.nbytes/1E6 + times.nbytes/1E6 + peaksCount.nbytes/1E6))
-        print("  | .. Attention: size will grow and depend on the number of local maxima in the chromatogram")
-        print("  | .. took %.1f seconds"%toc())
-        print("  | ")
+        print(verbosePrefix, "  | .. size of objects is %5.1f Mb"%(mzs.nbytes/1E6 + ints.nbytes/1E6 + times.nbytes/1E6 + peaksCount.nbytes/1E6), sep="")
+        print(verbosePrefix, "  | .. Attention: size will grow and depend on the number of local maxima in the chromatogram", sep="")
+        print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+        print(verbosePrefix, "  | ", sep="")
+    TabLog().addData(fileIdentifier, "Conv NP (sec)", toc())
 
     tic()
     d_mzs, d_ints, d_times, d_peaksCount = copyToDevice(mzs, ints, times, peaksCount)
@@ -592,18 +590,21 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     maxima = np.zeros(mzs.shape, dtype=bool)
     d_maxima = cuda.to_device(maxima)
     if verbose:
-        print("  | Copied numpy objects to device memory")
-        print("  | .. took %.1f seconds"%toc())
-        print("  | ")
+        print(verbosePrefix, "  | Copied numpy objects to device memory", sep="")
+        print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+        print(verbosePrefix, "  | ", sep="")
+    TabLog().addData(fileIdentifier, "CP GPU (sec)", toc())
 
     tic()
     d_res = getLocalMaxima[griddim, blockdim](d_mzs, d_ints, d_times, d_peaksCount, d_maxima, intraScanMaxAdjacentSignalDifferencePPM, interScanMaxSimilarSignalDifferencePPM, minIntensity)
     cuda.synchronize()
     maxima = d_maxima.copy_to_host()
     if verbose:
-        print("  | Found %d local maxima"%(np.sum(maxima)))
-        print("  | .. took %.1f seconds"%toc())
-        print("  | ")
+        print(verbosePrefix, "  | Found %d local maxima"%(np.sum(maxima)), sep="")
+        print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+        print(verbosePrefix, "  | ", sep="")
+    TabLog().addData(fileIdentifier, "n locMax", np.sum(maxima))
+    TabLog().addData(fileIdentifier, "locMax (sec)", toc())
 
     tic()
     maximaPropsAll = np.argwhere(maxima > 0)
@@ -616,9 +617,10 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     getPropsOfSignals[griddim, blockdim](d_mzs, d_ints, d_times, d_peaksCount, d_maximaPropsAll)
     cuda.synchronize()
     if verbose:
-        print("  | Calculated properties of local maxima")
-        print("  | .. took %.1f seconds"%toc())
-        print("  | ")
+        print(verbosePrefix, "  | Calculated properties of local maxima", sep="")
+        print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+        print(verbosePrefix, "  | ", sep="")
+    TabLog().addData(fileIdentifier, "prop locMax (sec)", toc())
 
     tic()
     gradientDescendMZProfileSignals[griddim, blockdim](d_mzs, d_ints, d_times, d_peaksCount, d_maximaPropsAll, intraScanMaxAdjacentSignalDifferencePPM)
@@ -627,10 +629,12 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     maximaProps = maximaPropsAll[maximaPropsAll[:,5]>0,:]
     d_maximaProps = cuda.to_device(maximaProps)
     if verbose:
-        print("  | Calculated mz peak deviations")
-        print("  | .. there are %d local maxima with an mz profile peak (%.3f%% of all signals)"%(maximaProps.shape[0], 100.*maximaProps.shape[0]/(maxima.shape[0]*maxima.shape[1])))
-        print("  | .. took %.1f seconds"%toc())
-        print("  | ")
+        print(verbosePrefix, "  | Calculated mz peak deviations", sep="")
+        print(verbosePrefix, "  | .. there are %d local maxima with an mz profile peak (%.3f%% of all signals)"%(maximaProps.shape[0], 100.*maximaProps.shape[0]/(maxima.shape[0]*maxima.shape[1])), sep="")
+        print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+        print(verbosePrefix, "  | ", sep="")
+    TabLog().addData(fileIdentifier, "n locMax mzPeak", maximaProps.shape[0])
+    TabLog().addData(fileIdentifier, "locMax mzPeak (sec)", toc())
 
     tic()
     gradientDescendRTPeaks[griddim, blockdim](d_mzs, d_ints, d_times, d_peaksCount, d_maximaProps, interScanMaxSimilarSignalDifferencePPM, RTpeakWidth[0], RTpeakWidth[1], minApexBorderRatio, minIntensity)
@@ -639,10 +643,12 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     peaks = peaks[peaks[:,7]>0,:]
     d_peaks = cuda.to_device(peaks)
     if verbose:
-        print("  | Calculated rt peak borders")
-        print("  | .. there are %d local maxima with an mz profile peak and an rt-peak-like shape (%.3f%% of all signals)"%(maximaProps.shape[0], 100.*maximaProps.shape[0]/(maxima.shape[0]*maxima.shape[1])))
-        print("  | .. took %.1f seconds"%toc())
-        print("  | ")
+        print(verbosePrefix, "  | Calculated rt peak borders", sep="")
+        print(verbosePrefix, "  | .. there are %d local maxima with an mz profile peak and an rt-peak-like shape (%.3f%% of all signals)"%(peaks.shape[0], 100.*maximaProps.shape[0]/(maxima.shape[0]*maxima.shape[1])), sep="")
+        print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+        print(verbosePrefix, "  | ", sep="")
+    TabLog().addData(fileIdentifier, "n peaks", peaks.shape[0])
+    TabLog().addData(fileIdentifier, "peaks (sec)", toc())
 
     tic()
     joinSplitPeaks[griddim, blockdim](d_peaks)
@@ -651,10 +657,12 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     peaks = peaks[peaks[:,7]>0,:]
     d_peaks = cuda.to_device(peaks)
     if verbose:
-        print("  | Joined noisy local maxima")
-        print("  | .. there are %d local maxima with an mz profile peak and an rt-peak-like shape that are not split (%.3f%% of all signals)"%(peaks.shape[0], 100.*peaks.shape[0]/(maxima.shape[0]*maxima.shape[1])))
-        print("  | .. took %.1f seconds"%toc())
-        print("  | ")
+        print(verbosePrefix, "  | Joined noisy local maxima", sep="")
+        print(verbosePrefix, "  | .. there are %d local maxima with an mz profile peak and an rt-peak-like shape that are not split (%.3f%% of all signals)"%(peaks.shape[0], 100.*peaks.shape[0]/(maxima.shape[0]*maxima.shape[1])), sep="")
+        print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+        print(verbosePrefix, "  | ", sep="")
+    TabLog().addData(fileIdentifier, "n join peaks", peaks.shape[0])
+    TabLog().addData(fileIdentifier, "join peaks (sec)", toc())
         
     tic()
     cuda.defer_cleanup()
@@ -664,56 +672,63 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     gdProps = np.zeros((batchSize, 6), np.float32) ## gdProps: apexRTInd, apexMZInd, rtLeftBorderInd, rtRightBorderInd, mzLowestInd, mzHighestInd
     outVal = 0
     
-    locMax = None
-    d_locMax = None
-    if exportLocalMaxima == "peak-like-shape":
-        locMax = peaks
-        d_locMax = d_peaks
-    elif exportLocalMaxima == "localMaxima-with-mzProfile":
-        locMax = maximaProps
-        d_locMax = d_maximaProps
-    elif exportLocalMaxima == "all":
-        locMax = maximaPropsAll
-        d_locMax = d_maximaPropsAll
+    if exportLocalMaxima is not None:
     
-    if verbose:
-        print("  | Exporting %d local maxima to standardized area"%(locMax.shape[0]))
-        print("  | .. %d batch files, %d features per batch each with approximately %5.1f Mb each"%(math.ceil(locMax.shape[0]/batchSize), batchSize, newData.nbytes/1E6))
-        print("  | .. directory '%s'"%(exportPath))
-        
-    cur = 0
-    with tqdm.tqdm(total = math.ceil(locMax.shape[0]/batchSize), desc="  | .. exporting", disable=not verbose) as t:
-        while cur < locMax.shape[0]:
-            newData.fill(0)
-            areaRTs.fill(-10) 
-            areaMZs.fill(0)
-            gdProps.fill(0)
-            d_newData = cuda.to_device(newData)
-            d_areaRTs = cuda.to_device(areaRTs)
-            d_areaMZs = cuda.to_device(areaMZs)
-            d_gdProps = cuda.to_device(gdProps)
-            
-            renovatePeaksToArea[griddim, blockdim](d_mzs, d_ints, d_times, d_peaksCount, d_locMax, d_newData, d_areaRTs, d_areaMZs, d_gdProps, cur, cur+batchSize)
-            cuda.synchronize()
-            
-            newData = d_newData.copy_to_host()
-            areaRTs = d_areaRTs.copy_to_host()
-            areaMZs = d_areaMZs.copy_to_host()
-            gdProps = d_gdProps.copy_to_host()
+        locMax = None
+        d_locMax = None
+        if exportLocalMaxima == "peak-like-shape":
+            locMax = peaks
+            d_locMax = d_peaks
+        elif exportLocalMaxima == "localMaxima-with-mzProfile":
+            locMax = maximaProps
+            d_locMax = d_maximaProps
+        elif exportLocalMaxima == "all":
+            locMax = maximaPropsAll
+            d_locMax = d_maximaPropsAll
 
-            use = areaRTs[:,0] > -10
-            pickle.dump({"lcmsArea": newData[use,:,:], 
-                         "areaRTs" : areaRTs[use,:], 
-                         "areaMZs" : areaMZs[use,:],
-                         "gdProps" : gdProps[use, :]}, 
-                        open("%s/instancePrefix%d.pickle"%(exportPath, outVal), "wb"))
-            
-            cur += batchSize
-            outVal += 1
-            t.update()
-    if verbose:
-        print("  | .. took %.1f seconds"%toc())
-        print("  |")
+        if verbose:
+            print(verbosePrefix, "  | Exporting %d local maxima to standardized area"%(locMax.shape[0]), sep="")
+            print(verbosePrefix, "  | .. %d batch files, %d features per batch each with approximately %5.1f Mb each"%(math.ceil(locMax.shape[0]/batchSize), batchSize, newData.nbytes/1E6), sep="")
+            print(verbosePrefix, "  | .. directory '%s'"%(exportPath), sep="")
+
+        cur = 0
+        with tqdm.tqdm(total = math.ceil(locMax.shape[0]/batchSize), desc="  | .. exporting", disable=not verbose) as t:
+            while cur < locMax.shape[0]:
+                newData.fill(0)
+                areaRTs.fill(-10) 
+                areaMZs.fill(0)
+                gdProps.fill(0)
+                d_newData = cuda.to_device(newData)
+                d_areaRTs = cuda.to_device(areaRTs)
+                d_areaMZs = cuda.to_device(areaMZs)
+                d_gdProps = cuda.to_device(gdProps)
+                
+                ## TODO: Export leaves a lot of GPU resources unused since only batchSize local maxima are processed at a time.
+                ##       There is much room for improvement. The implementation is similar to the training-export
+                renovatePeaksToArea[griddim, blockdim](d_mzs, d_ints, d_times, d_peaksCount, d_locMax, d_newData, d_areaRTs, d_areaMZs, d_gdProps, cur, cur+batchSize)
+                cuda.synchronize()
+
+                newData = d_newData.copy_to_host()
+                areaRTs = d_areaRTs.copy_to_host()
+                areaMZs = d_areaMZs.copy_to_host()
+                gdProps = d_gdProps.copy_to_host()
+
+                use = areaRTs[:,0] > -10
+                pickle.dump({"lcmsArea": newData[use,:,:], 
+                             "areaRTs" : areaRTs[use,:], 
+                             "areaMZs" : areaMZs[use,:],
+                             "gdProps" : gdProps[use, :]}, 
+                            open("%s/instancePrefix%d.pickle"%(exportPath, outVal), "wb"))
+
+                cur += batchSize
+                outVal += 1
+                t.update()
+    
+    
+        if verbose:
+            print(verbosePrefix, "  | .. took %.1f seconds"%toc(), sep="")
+            print(verbosePrefix, "  |", sep="")
+        TabLog().addData(fileIdentifier, "export (sec)", toc())
 
     tic()
     d_mzs            = None
@@ -729,7 +744,7 @@ def preProcessChromatogram(mzxml, intraScanMaxAdjacentSignalDifferencePPM, inter
     cuda.defer_cleanup()
     
     if verbose: 
-        print("  | Pre-processing with CUDA took %.1f seconds"%toc("preprocessing"))
-        print("")
+        print(verbosePrefix, "  | Pre-processing with CUDA took %.1f seconds"%toc("preprocessing"), sep="")
+    TabLog().addData(fileIdentifier, "preprocessing (sec)", toc("preprocessing"))
         
     return peaks, maximaProps, maximaPropsAll
