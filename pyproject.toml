@@ -4,12 +4,18 @@ author = "Christoph Bueschl, Juergen Zanghellini"
 author-email = "christoph.bueschl [the little e-mail-symbol] univie.ac.at"
 
 [build-system]
-requires-python=">=3.9.5"
+requires-python=">=3.8.10"
 requires = [
-    "numpy>=1.19.5",
-    "scipy>=1.7.0",
-    "tensorflow>=2.5.0",
+    "numpy>=1.20.1",
+    "scipy>=1.6.1",
+    "tensorflow>=2.4.1",
     "numba>=0.53.1",
-    "tqdm>=4.61.1"
+    "pandas>=1.2.3",
+    "matplotlib>=3.4.2",
+    "plotnine>=0.8.0",
+    
+    "tqdm>=4.61.2",
+    "natsort>=7.1.1",    
+    "py-cpuinfo>=8.0.0"
 ]
 build-backend = "setuptools.build_meta"

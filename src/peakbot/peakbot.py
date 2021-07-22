@@ -27,20 +27,21 @@ class Config(object):
     NAME    = "PeakBot"
     VERSION = "4.6"
     
-    RTSLICES   =  32   ## should be of 2^n
-    MZSLICES   = 128   ## should be of 2^m    
-    NUMCLASSES =   6   ## [isFullPeak, hasCoelutingPeakLeftAndRight, hasCoelutingPeakLeft, hasCoelutingPeakRight, isWall, isBackground]
+    RTSLICES       =  32   ## should be of 2^n
+    MZSLICES       = 128   ## should be of 2^m    
+    NUMCLASSES     =   6   ## [isFullPeak, hasCoelutingPeakLeftAndRight, hasCoelutingPeakLeft, hasCoelutingPeakRight, isWall, isBackground]
+    FIRSTNAREPEAKS =   4   ## specifies which of the first n classes represent a chromatographic peak (i.e. if classes 0,1,2,3 represent a peak, the value for this parameter must be 4)
     
-    BATCHSIZE     = 128
+    BATCHSIZE     =  32
     STEPSPEREPOCH =  64
     EPOCHS        = 512
     
     DROPOUT        = 0.2
-    UNETLAYERSIZES = [32, 64, 128, 256]
+    UNETLAYERSIZES = [32,64,128,256]
     
     LEARNINGRATESTART              = 0.005
     LEARNINGRATEDECREASEAFTERSTEPS = 5
-    LEARNINGRATEMULTIPLIER         = 0.7
+    LEARNINGRATEMULTIPLIER         = 0.9
     LEARNINGRATEMINVALUE           = 3e-7
     
     INSTANCEPREFIX = "___PBsample_"
@@ -74,7 +75,40 @@ class Config(object):
             "InstancePrefix: '%s'"%(Config.INSTANCEPREFIX),
             ""
         ])
+
+
     
+print("Initializing PeakBot")
+try:
+    import platform
+    print("  | .. OS:", platform.platform())
+except:
+    print("  | .. fetching OS information failed")
+
+print("  | .. TensorFlow version: %s"%(tf.__version__))
+
+try:
+    import cpuinfo
+    s = cpuinfo.get_cpu_info()["brand_raw"]
+    print("  | .. CPU: %s"%(s))
+except:
+    print("  | .. fetching CPU info failed")
+
+try:
+    from psutil import virtual_memory
+
+    mem = virtual_memory()
+    print("  | .. %.1f GB main memory"%(mem.total/1000/1000/1000))
+except:
+    print("  | .. fetching main memory info failed")
+
+try:
+    gpus = tf.config.experimental.list_physical_devices()
+    for gpu in gpus:
+        print("  | .. TensorFlow device: Name '%s', type '%s'"%(gpu.name, gpu.device_type))
+except:
+    print("  | .. fetching GPU info failed")
+
 
     
     
@@ -96,9 +130,9 @@ def dataGenerator(folder, instancePrefix = None, verbose=False):
         instancePrefix = Config.INSTANCEPREFIX
     
     ite = 0
-    while os.path.isfile("%s/%s%d.pickle"%(folder, instancePrefix, ite)):
+    while os.path.isfile(os.path.join(folder, "%s%d.pickle"%(instancePrefix, ite))):
             
-        l = pickle.load(open("%s/%s%d.pickle"%(folder, instancePrefix, ite), "rb"))        
+        l = pickle.load(open(os.path.join(folder, "%s%d.pickle"%(instancePrefix, ite)), "rb"))        
         assert all(np.amax(l["LCHRMSArea"], (1,2)) == 1), "LCHRMSarea is not scaled to a maximum of 1 '%s'"%(str(np.amax(l["LCHRMSArea"], (1,2))))
         yield l        
         ite += 1
@@ -133,9 +167,12 @@ def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
                 elif isinstance(l[k], list):
                     l[k] = l[k][0:newBatchSize]
         
-        yield {"LCHRMSArea": l["LCHRMSArea"]}, {"peakType"        : l["peakType"        ], 
-                                                "center"          : l["center"          ], 
-                                                "box"             : l["box"             ]}
+        yield {"LCHRMSArea": l["LCHRMSArea"]}, \
+              {"peakType" : l["peakType"], 
+               "center"   : l["center"  ], 
+               "box"      : l["box"     ],
+               #"single"   : l["single"  ],
+              }
         l = next(datGen)
         ite += 1   
         
@@ -193,6 +230,51 @@ def batch_iou(boxes1, boxes2):
         iou = tf.divide(intersection_area, union_area)
 
         return iou
+    
+## adapted from https://medium.com/analytics-vidhya/custom-metrics-for-keras-tensorflow-ae7036654e05
+def recall(y_true, y_pred):
+    true_positives     = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip(y_true * y_pred, 0, 1)))
+    possible_positives = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip(y_true, 0, 1)))
+    recall_keras = true_positives / (possible_positives + tf.keras.backend.epsilon())
+    return recall_keras
+
+## adapted from https://medium.com/analytics-vidhya/custom-metrics-for-keras-tensorflow-ae7036654e05
+def precision(y_true, y_pred):
+    true_positives      = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip(y_true * y_pred, 0, 1)))
+    predicted_positives = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip(y_pred, 0, 1)))
+    precision_keras = true_positives / (predicted_positives + tf.keras.backend.epsilon())
+    return precision_keras
+
+## adapted from https://medium.com/analytics-vidhya/custom-metrics-for-keras-tensorflow-ae7036654e05
+def specificity(y_true, y_pred):
+    tn = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip((1 - y_true) * (1 - y_pred), 0, 1)))
+    fp = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip((1 - y_true) * y_pred, 0, 1)))
+    return tn / (tn + fp + tf.keras.backend.epsilon())
+
+## adapted from https://medium.com/analytics-vidhya/custom-metrics-for-keras-tensorflow-ae7036654e05
+def negative_predictive_value(y_true, y_pred):
+    tn = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip((1 - y_true) * (1 - y_pred), 0, 1)))
+    fn = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip(y_true * (1 - y_pred), 0, 1)))
+    return tn / (tn + fn + tf.keras.backend.epsilon())
+
+## adapted from https://medium.com/analytics-vidhya/custom-metrics-for-keras-tensorflow-ae7036654e05
+def f1(y_true, y_pred):
+    p = precision(y_true, y_pred)
+    r = recall(y_true, y_pred)
+    return 2 * ((p * r) / (p + r + tf.keras.backend.epsilon()))
+
+def pF1(y_true, y_pred):
+    return f1(tf.cast(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS), tf.float32),
+              tf.cast(tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS), tf.float32))
+def pTPR(y_true, y_pred):
+    return recall(tf.cast(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS), tf.float32),
+                  tf.cast(tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS), tf.float32))
+def pFPR(y_true, y_pred):
+    return 1-precision(tf.cast(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS), tf.float32),
+                       tf.cast(tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS), tf.float32))
+
+                        
+
 
 def convertGeneratorToPlain(gen, numIters=1):
     x = None
@@ -236,6 +318,8 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
         self.everyNthEpoch = everyNthEpoch
         self.lastEpochNum = 0
         self.history = []
+        self.printWidths = {}
+        self.maxLenNames = 0
     
     def addValidationSet(self, validation_set):
         if len(validation_set) not in [3, 4]:
@@ -249,8 +333,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
         hist = None
         if epoch%self.everyNthEpoch == 0 or ignoreEpoch:
             hist={}
-            if self.verbose: print("Additional test datasets (epoch %d): "%(epoch+1), end="")
-            add = False
+            if self.verbose: print("Additional test datasets (epoch %d): "%(epoch+1))
             # evaluate on the additional validation sets
             for validation_set in self.validation_sets:
                 if len(validation_set) == 2:
@@ -272,17 +355,22 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                                               batch_size=self.batch_size,
                                               steps=self.steps)
                 
+                self.maxLenNames = max(self.maxLenNames, len(validation_set_name))
+                print("   %%%ds: "%self.maxLenNames%validation_set_name, end="")
+                
                 file_writer = tf.summary.create_file_writer(self.logDir + "/" + validation_set_name)
-                for metric, result in zip(self.model.metrics_names,results):
+                for i, (metric, result) in enumerate(zip(self.model.metrics_names, results)):
                     valuename = "epoch_" + metric
                     with file_writer.as_default():
                         tf.summary.scalar(valuename, data=result, step=epoch)
-                    if add:
-                        if self.verbose: print(" - ", end="")
-                    add=True
-                    valuename = validation_set_name + "_" + metric
-                    if self.verbose: print("%s: %.4f"%(valuename, result), end="")
-                    hist[valuename] = result
+                    if self.verbose and i > 0: print(", ", end="")
+                    valuename = metric
+                    if i not in self.printWidths.keys():
+                        self.printWidths[i] = 0
+                    self.printWidths[i] = max(self.printWidths[i], len(valuename))
+                    if self.verbose: print("%s: %.4f"%("%%%ds"%self.printWidths[i]%valuename, result), end="")
+                    hist[validation_set_name + "_" + valuename] = result
+                print("")
             if self.verbose: print("")
         self.history.append(hist)
                 
@@ -336,36 +424,65 @@ class PeakBot():
         x = input_
         cLayers = [x]
         for i in range(len(uNetLayerSizes)):
+            
             x = tf.keras.layers.ZeroPadding2D(padding=2)(x)
             x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (5,5), use_bias=True)(x)
             x = tf.keras.layers.BatchNormalization()(x)
             x = tf.keras.layers.Activation("relu")(x)
             
-            x = tf.keras.layers.Dropout(dropOutRate)(x)
+            #x = tf.keras.layers.Dropout(dropOutRate)(x)
             x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
             x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (3,3), use_bias=True)(x)
             x = tf.keras.layers.BatchNormalization()(x)
             x = tf.keras.layers.Activation("relu")(x)
             
+            x = tf.keras.layers.BatchNormalization()(x)
             x = tf.keras.layers.MaxPool2D((2,2))(x)
             cLayers.append(x)
         lastUpLayer = x
         
         ## Intermediate layer and feature properties (indices and borders)
+        x = tf.keras.layers.BatchNormalization()(x)
         fx          = tf.keras.layers.Flatten()(x)
         peakType    = tf.keras.layers.Dense(self.numClasses, name="peakType", activation="sigmoid")(fx)
-        center      = tf.keras.layers.Dense(              2, name="center"                        )(fx)
-        box         = tf.keras.layers.Dense(              4, name="box"                           )(fx)
+        center      = tf.keras.layers.Dense(              2, name="center"  , activation="relu"   )(fx)
+        box         = tf.keras.layers.Dense(              4, name="box"     , activation="relu"   )(fx)
+      
+        ### Decoder
+        #for i in range(len(uNetLayerSizes)-1, -1, -1):
+        #    x = tf.keras.layers.UpSampling2D((2,2))(x)
+        #    x = tf.concat([x, cLayers[i]], axis=3)
+        #    x = tf.keras.layers.ZeroPadding2D(padding=2)(x) 
+        #    x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (5,5), use_bias=True)(x)
+        #    x = tf.keras.layers.BatchNormalization()(x)
+        #    x = tf.keras.layers.Activation("relu")(x)
+        #    
+        #    x = tf.keras.layers.ZeroPadding2D(padding=1)(x) 
+        #    x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (3,3), use_bias=True)(x)
+        #    x = tf.keras.layers.BatchNormalization()(x)
+        #    if i > 0:
+        #        x = tf.keras.layers.Add()([x, cLayers[i]])
+        #    x = tf.keras.layers.Activation("relu")(x)
+        #        
+        #x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
+        #x = tf.keras.layers.Conv2D(1, (3,3))(x)
+        #x = tf.keras.layers.BatchNormalization()(x)
+        #maxV = tf.keras.layers.maximum(x)
+        #x = tf.math.divide(x, maxV, name="single")
+        
+        #x = tf.keras.layers.Activation("sigmoid", name="single")(x)
+        #single = x
             
         if verbose: 
             print("  | .. Intermediate layer")
             print("  | .. .. lastUpLayer is", lastUpLayer)
             print("  | .. .. fx          is", fx)
-            print("  | .. ")            
+            print("  | .. ")
             print("  | .. Outputs")
             print("  | .. .. peak        is", peakType)
             print("  | .. .. center      is", center)
             print("  | .. .. box         is", box)
+            #print("  | .. .. single      is", single)
             print("  | .. ")
             print("  | ")
 
@@ -377,19 +494,21 @@ class PeakBot():
         self.model.compile(
             optimizer = tf.keras.optimizers.Adam(learning_rate=learningRate),
             loss         = {
-                        "peakType"   : "CategoricalCrossentropy",
-                        "center"     : tf.keras.losses.Huber(),
-                        "box"        : tf.keras.losses.Huber(),
+                        "peakType" : "CategoricalCrossentropy",
+                        "center"   : tf.keras.losses.Huber(),
+                        "box"      : tf.keras.losses.Huber(),
+                        #"single"   : "MSE",
                       },
             metrics      = {
-                        "peakType" : ["categorical_accuracy"],
+                        "peakType" : ["categorical_accuracy", pF1, pTPR, pFPR],
                         "center"   : [],
                         "box"      : [batch_iou],
                       },
             loss_weights = {
-                        "peakType"   : 1,
-                        "center"     : 1,
-                        "box"        : 1,
+                        "peakType" : 1,
+                        "center"   : 1,
+                        "box"      : 1,
+                        #"single"   : 1,
                       }
         )
     
@@ -407,10 +526,10 @@ class PeakBot():
             print("  |")
         
         if logDir is None:
-            logDir = "logs/fit/PeakBot_v" + self.version + "_" + uuid.uuid4().hex
+            logDir = os.path.join("logs", "fit", "PeakBot_v" + self.version + "_" + uuid.uuid4().hex)
         
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logDir, histogram_freq = 1, write_graph = True)
-        file_writer = tf.summary.create_file_writer(logDir + "/scalars")
+        file_writer = tf.summary.create_file_writer(os.path.join(logDir, "scalars"))
         file_writer.set_as_default()
 
         _callBacks = []
@@ -458,8 +577,8 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         modelName = "%s%s__%s"%(Config.NAME, Config.VERSION, uuid.uuid4().hex[0:6])
         
     ## log information to folder
-    logDir = logBaseDir + "/" + modelName
-    logger = tf.keras.callbacks.CSVLogger('%s/clog.tsv'%(logDir), separator="\t")
+    logDir = os.path.join(logBaseDir, modelName)
+    logger = tf.keras.callbacks.CSVLogger(os.path.join(logDir, "clog.tsv"), separator="\t")
     
     if verbose:
         print("Training new PeakBot model")
@@ -490,6 +609,8 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
                                      everyNthEpoch = everyNthEpoch, 
                                      verbose = verbose)
     if addValidationInstances is not None:
+        if verbose: 
+            print("  | Additional validation datasets")
         for valInstance in addValidationInstances:
             x,y = None, None
             if "folder" in valInstance.keys():
@@ -502,8 +623,13 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
                 y = valInstance["y"]
             if x is not None and y is not None and "name" in valInstance.keys():
                 valDS.addValidationSet((x,y, valInstance["name"]))
+                if verbose: 
+                    print("  | .. %s: %d instances"%(valInstance["name"], x["LCHRMSArea"].shape[0]))
+                    
             else:
                 raise RuntimeError("Unknonw additional validation dataset")
+        if verbose:
+            print("  |")
         
     ## instanciate a new model and set its parameters
     pb = PeakBot(modelName, batchSize = Config.BATCHSIZE, rts = Config.RTSLICES, mzs = Config.MZSLICES)
@@ -531,7 +657,7 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         for valInstance in addValidationInstances:
     
             se = valInstance["name"]
-            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "box_batch_iou"]:
+            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_batch_iou"]:
                 val = hist[se + "_" + metric]
                 newRow = pd.Series({"model": modelName, "set": se, "metric": metric, "value": val})
                 metricesAddValDS = metricesAddValDS.append(newRow, ignore_index=True)
@@ -559,7 +685,7 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         
 @timeit
 def runPeakBot(pathFrom, modelPath, verbose = True):
-    tic("running peakbot")
+    tic("detecting with peakbot")
     
     peaks = []
     backgrounds = 0
@@ -573,10 +699,13 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
         print("  | .. loading PeakBot model '%s'"%(modelPath))
         print("  | .. detecting peaks in the areas in the folder '%s'"%(pathFrom))
         
-    model = tf.keras.models.load_model(modelPath, custom_objects = {"batch_iou": batch_iou})
+    model = tf.keras.models.load_model(modelPath, custom_objects = {"batch_iou": batch_iou,"recall": recall, 
+                                                                    "precision": precision, "specificity": specificity, 
+                                                                    "negative_predictive_value": negative_predictive_value, 
+                                                                    "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR})
     
     for fi in tqdm.tqdm(os.listdir(pathFrom), desc="  | .. detecting chromatographic peaks", disable=not verbose):
-        l = pickle.load(open(pathFrom+"/"+fi, "rb"))
+        l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
         lcmsArea = l["lcmsArea"]
         for j in range(lcmsArea.shape[0]):
             m = np.max(lcmsArea[j,:,:])
@@ -589,7 +718,7 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
         for j in range(lcmsArea.shape[0]):
             ptyp = np.argmax(np.array(pred[0][j,:]))
             prtInd, pmzInd = [round(i) for i in pred[1][j,:]]
-            prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]                    
+            prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]
 
             if ptyp == 0 or ptyp == 1 or ptyp == 2 or ptyp == 3:
                 try:                      
@@ -610,16 +739,16 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
                     if 0 <= pmzendInd < l["areaMZs"].shape[1]:
                         pmzend = l["areaMZs"][j, pmzendInd]
 
-                    peaks.append([prt, pmz, prtstart, prtend, pmzstart, pmzend])
+                    if prt!=-1 and pmz!=-1 and prtstart!=-1 and prtend!=-1 and pmzstart!=-1 and pmzend!=-1:
+                        peaks.append([prt, pmz, prtstart, prtend, pmzstart, pmzend])
                     
                 except:
-                    import traceback
-                    traceback.print_exc()
                     errors += 1
+            
             elif ptyp == 4:
-                backgrounds += 1
-            elif ptyp == 5:
                 walls += 1
+            elif ptyp == 5:
+                backgrounds += 1
             else: 
                 errors += 1
 
@@ -630,10 +759,10 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
         print("  | .. of these %7d (%5.1f%%) are walls                "%(walls      , 100 * walls       / peaksDone))
         if errors>0:
             print("  | .. encountered %d errors"%(errors))
-        print("  | .. took %.1f seconds"%(toc("running peakbot")))
+        print("  | .. took %.1f seconds"%(toc("detecting with peakbot")))
         print("")
         
-    return peaks
+    return peaks, walls, backgrounds, errors
 
 @timeit
 def exportPeakBotResultsFeatureML(peaks, fileTo):                
@@ -683,11 +812,12 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
     import plotnine as p9
     import pandas as pd
     for fi in tqdm.tqdm(os.listdir(pathFrom)):
-        l = pickle.load(open(pathFrom+"/"+fi, "rb"))
-        lcmsArea = l["lcmsArea"]
+        l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
+        
+        lcmsArea = l["LCHRMSArea"]
         areaRTs  = l["areaRTs"]
         areaMZs  = l["areaMZs"]
-        lcmsArea = np.expand_dims(lcmsArea, len(lcmsArea.shape))
+        single   = l["single"]
         
         pred = None
         if model is not None:
@@ -709,11 +839,17 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
             
             for rowi in range(lcmsArea.shape[1]):
                 for coli in range(lcmsArea.shape[2]):
-                    if lcmsArea[j, rowi, coli, 0] > threshold:
+                    if lcmsArea[j, rowi, coli] > threshold:
                         rts.append(areaRTs[j, rowi])
                         mzs.append(areaMZs[j, coli])
-                        ints.append(lcmsArea[j, rowi, coli, 0])
-                        typs.append("raw (>%f)"%threshold)
+                        ints.append(lcmsArea[j, rowi, coli])
+                        typs.append("LCHRMS area (>%f)"%threshold)
+                        alphas.append(0.25)
+                    if single[j, rowi, coli] > threshold:
+                        rts.append(areaRTs[j, rowi])
+                        mzs.append(areaMZs[j, coli])
+                        ints.append(single[j, rowi, coli])
+                        typs.append("single (>%f)"%threshold)
                         alphas.append(0.25)
 
             dat = pd.DataFrame({"rts": rts, "mzs": mzs, "ints": ints, "typ": typs, "alpha": alphas})
@@ -727,19 +863,21 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
             plot = (plot + p9.scale_alpha(guide = None))
             
             rt, mz, rtLeftBorder, rtRightBorder, mzLowest, mzHighest = -1, -1, -1, -1, -1, -1
-            apexRTInd, apexMZInd, rtLeftBorderInd, rtRightBorderInd, mzLowestInd, mzHighestInd = [int(i) for i in l["gdProps"][j,:]]
-            if 0 <= apexRTInd <= l["areaRTs"].shape[1]:
+            typ = int(l["peakType"][j,0]) 
+            apexRTInd, apexMZInd = [int(i) for i in l["center"][j,:]]
+            rtLeftBorderInd, rtRightBorderInd, mzLowestInd, mzHighestInd = [int(i) for i in l["box"][j,:]]
+            if 0 <= apexRTInd < l["areaRTs"].shape[1]:
                 rt = l["areaRTs"][j,apexRTInd]
-            if 0 <= rtLeftBorderInd <= l["areaRTs"].shape[1]:
+            if 0 <= rtLeftBorderInd < l["areaRTs"].shape[1]:
                 rtLeftBorder = l["areaRTs"][j,rtLeftBorderInd]
-            if 0 <= rtRightBorderInd <= l["areaRTs"].shape[1]:
+            if 0 <= rtRightBorderInd < l["areaRTs"].shape[1]:
                 rtRightBorder = l["areaRTs"][j,rtRightBorderInd]
             
-            if 0 <= apexMZInd <= l["areaMZs"].shape[1]:
+            if 0 <= apexMZInd < l["areaMZs"].shape[1]:
                 mz = l["areaMZs"][j,apexMZInd]
-            if 0 <= mzLowestInd <= l["areaMZs"].shape[1]:
+            if 0 <= mzLowestInd < l["areaMZs"].shape[1]:
                 mzLowest = l["areaMZs"][j,mzLowestInd]
-            if 0 <= mzHighestInd <= l["areaMZs"].shape[1]:
+            if 0 <= mzHighestInd < l["areaMZs"].shape[1]:
                 mzHighest = l["areaMZs"][j,mzHighestInd]
                                                 
             plot = (plot + p9.geom_rect(xmin = rtLeftBorder, 
@@ -802,7 +940,7 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
             plot = (plot + 
                     p9.ggtitle("RT %.2f (box %.2f - %.2f)\nMZ %.4f (box %.4f - %.4f, %.1f ppm)\nType '%s'"%(prt, prtstart, prtend, pmz, pmzstart, pmzend, (pmzend-pmzstart)*1E6/pmz, ["Single peak", "Isomers earlier and later", "Isomer earlier", "Isomer later", "Background", "Wall"][np.argmax(np.array(pred[0][j,:]))])))
             
-            p9.ggsave(plot=plot, filename="%s/%d.png"%(toFolder, cur), height=7, width=12)
+            p9.ggsave(plot=plot, filename=os.path.join(toFolder, "%d.png"%(cur)), height=7, width=12)
             cur += 1
 
 

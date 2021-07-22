@@ -4,6 +4,7 @@ from collections import OrderedDict
 import csv
 import time
 import datetime
+import os
 
 ## General functions
 #Function statistics and runtime

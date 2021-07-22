@@ -18,8 +18,8 @@ Several options are available to use PeakBot. The preferred one is a virtual env
 Make sure you have Anaconda installed or install it (https://www.anaconda.com/). 
 Create a new conda virtual environment and activate it
 ```
-conda create -n 3.9 python=3.6
-conda activate python3.9
+conda create -n python3.8 python=3.8
+conda activate python3.8
 ```
 
 Install the TensorFlow GPU support

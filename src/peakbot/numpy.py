@@ -9,6 +9,7 @@ import scipy.stats
 
 import math
 import platform
+import os
 
 @timeit
 def initializeNUMPYFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus = 30, SavitzkyGolayWindowPlusMinus = 5):
@@ -793,10 +794,10 @@ def exportForPeakBot(mzxml, pathTo, expList, filterLine, rtSlices = None, mzSlic
         with sharedLock:
             outVal = sharedValue.value
             sharedValue.value += 1
-        pickle.dump([datAll, propertiesAll], open("%s/sample%d.pickle"%(pathTo, outVal), "wb"))
+        pickle.dump([datAll, propertiesAll], open(os.path.join("%s", "sample%d.pickle"%(pathTo, outVal)), "wb"))
         if verbose and False:
             with sharedPrintLock:
-                print(" .. exported %d local maxima to file %s"%(datAll.shape[0], "%s/sample%d.pickle"%(pathTo, outVal)))
+                print(" .. exported %d local maxima to file %s"%(datAll.shape[0], os.path.join("%s", "sample%d.pickle"%(pathTo, outVal))))
         datAll = None
         propertiesAll = None
         packNum += 1
