@@ -179,6 +179,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
 
     def _gradientDescendMZProfile(mzs, ints, times, peaksCount, scanInd, peakInd, maxmzDiffPPMAdjacentProfileSignal):
         mz = mzs[scanInd, peakInd]
+        intA = ints[scanInd, peakInd]
 
         ## Gradient descend find borders of mz profile peak
         prevInt = ints[scanInd, peakInd]
@@ -186,7 +187,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         mzst = prevMZ * prevInt
         totalIntensity = prevInt
         indLow = peakInd
-        while indLow-1 >= 0 and ints[scanInd, indLow-1]<prevInt and abs(mzs[scanInd, indLow-1] - prevMZ)*1E6/mz <= maxmzDiffPPMAdjacentProfileSignal:
+        while indLow-1 >= 0 and ints[scanInd, indLow-1]<prevInt and ints[scanInd, indLow-1]/intA >= 0.01 and abs(mzs[scanInd, indLow-1] - prevMZ)*1E6/mz <= maxmzDiffPPMAdjacentProfileSignal:
             indLow = indLow - 1
             mzst = mzst + ints[scanInd, indLow] * mzs[scanInd, indLow]
             totalIntensity = totalIntensity + ints[scanInd, indLow]
@@ -196,7 +197,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         prevInt = ints[scanInd, peakInd]
         prevMZ = mzs[scanInd, peakInd]
         indUp = peakInd
-        while indUp+1 < peaksCount[scanInd] and ints[scanInd, indUp+1]<prevInt and abs(mzs[scanInd, indUp+1] - prevMZ)*1E6/mz <= maxmzDiffPPMAdjacentProfileSignal:
+        while indUp+1 < peaksCount[scanInd] and ints[scanInd, indUp+1]<prevInt and ints[scanInd, indUp+1]/intA >= 0.01 and abs(mzs[scanInd, indUp+1] - prevMZ)*1E6/mz <= maxmzDiffPPMAdjacentProfileSignal:
             indUp = indUp + 1
             mzst = mzst + ints[scanInd, indUp] * mzs[scanInd, indUp]
             totalIntensity = totalIntensity + ints[scanInd, indUp]
@@ -211,26 +212,13 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         for i in range(indLow, indUp+1):
             mzsDev  = mzsDev + ints[scanInd, i] * math.pow(mzs[scanInd, i] - wMeanMZ, 2)
         if indUp == indLow:
-            return -1
+            return -1, -1
         wSTDMZ = math.sqrt(mzsDev / ((indUp + 1 - indLow - 1) * totalIntensity / (indUp + 1 - indLow)))
 
         if wSTDMZ == 0:
-            return -1
-        scaleFactor =  ints[scanInd, peakInd] / _getNormDist_kernel(wMeanMZ, wSTDMZ, mzs[scanInd, peakInd])
+            return -1, -1
 
-        diffs = 0
-        diffsPos = 0
-        diffsNeg = 0
-        for i in range(indLow, indUp+1):
-            hTheo = _getNormDist_kernel(wMeanMZ, wSTDMZ, mzs[scanInd, i]) * scaleFactor
-            temp = hTheo - ints[scanInd, i]
-            diffs = diffs + math.pow(temp,2)
-            if temp > 0:
-                diffsPos = diffsPos + math.pow(temp,2)
-            else:
-                diffsNeg = diffsNeg + math.pow(temp, 2)
-
-        return wSTDMZ * 1E6 / mz * 6
+        return wMeanMZ, wSTDMZ * 1E6 / mz * 6
     global _gradientDescendMZProfile_kernel
     _gradientDescendMZProfile_kernel = cuda.jit(device=True)(_gradientDescendMZProfile)
 
@@ -274,7 +262,8 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         lInd = cuda.grid(1)
         lLen = cuda.gridsize(1)
         for j in range(lInd, signalsProps.shape[0], lLen):
-            bestPPMFit = _gradientDescendMZProfile_kernel(mzs, ints, times, peaksCount, int(signalsProps[j,0]), int(signalsProps[j,1]), maxmzDiffPPMAdjacentProfileSignal)
+            wMeanMZ, bestPPMFit = _gradientDescendMZProfile_kernel(mzs, ints, times, peaksCount, int(signalsProps[j,0]), int(signalsProps[j,1]), maxmzDiffPPMAdjacentProfileSignal)
+            signalsProps[j, 3] = wMeanMZ
             signalsProps[j, 5] = bestPPMFit
 
             ppmDifferenceAdjacentScans = _adjacentMZSignalsPPMDifference_kernel(mzs, ints, times, peaksCount, signalsProps[j,:], maxmzDiffPPMAdjacentProfileSignal)
@@ -314,26 +303,49 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
     def _gradientDescendRTPeak(mzs, ints, times, peaksCount, signalProps, interScanMaxSimilarSignalDifferencePPM, minWidth, maxWidth, minRatioFactor, minimumIntensity):
         scanInd = int(signalProps[0])
         peakInd = int(signalProps[1])
-        mz = signalProps[3]
+        
+        ## the mz value of a profile-signal is used rather than the weighted mz value as this can cause problems during eic generation
+        mz = mzs[scanInd, peakInd]
         
         eic = cuda.local.array(shape = _EICWindow, dtype=numba.float32)
+        for i in range(_EICWindow):
+            eic[i] = 0
         eicSmoothed = cuda.local.array(shape = _EICWindowSmoothed, dtype=numba.float32)
-
-        pos = 0
-        for i in range(scanInd - eicWindowPlusMinus*_extend - SavitzkyGolayWindowPlusMinus, scanInd + eicWindowPlusMinus*_extend + SavitzkyGolayWindowPlusMinus):
-            if i >= 0 and i < times.shape[0]:
-                ind = _findMostSimilarMZ_kernel(mzs, ints, times, peaksCount, i, mz * (1-interScanMaxSimilarSignalDifferencePPM/1E6), mz * (1+interScanMaxSimilarSignalDifferencePPM/1E6), mz)
-                if ind != -1:
-                    eic[pos] = ints[i, ind]
+        for i in range(_EICWindowSmoothed):
+            eicSmoothed[i] = 0
+        
+        pos = int(round(_EICWindow/2))
+        prevMZ = mz
+        for i in range(0, int(round((eicWindowPlusMinus*_extend + SavitzkyGolayWindowPlusMinus)/2))):
+            cScanInd = scanInd - i
+            if cScanInd >= 0 and cScanInd < times.shape[0]:
+                ind = _findMostSimilarMZ_kernel(mzs, ints, times, peaksCount, cScanInd, prevMZ * (1-interScanMaxSimilarSignalDifferencePPM/1E6), prevMZ * (1+interScanMaxSimilarSignalDifferencePPM/1E6), prevMZ)
+                if ind != -1 and pos >= 0:
+                    eic[pos] = ints[cScanInd, ind]
+                    prevMZ = mzs[cScanInd, ind]
                 else:
-                    eic[pos] = 0
-            pos = pos +1
+                    break
+            pos = pos - 1
+
+
+        pos = int(round(_EICWindow/2))
+        prevMZ = mz
+        for i in range(1, int(round((eicWindowPlusMinus*_extend + SavitzkyGolayWindowPlusMinus)/2))):
+            cScanInd = scanInd + i
+            if cScanInd >= 0 and cScanInd < times.shape[0]:
+                ind = _findMostSimilarMZ_kernel(mzs, ints, times, peaksCount, cScanInd, prevMZ * (1-interScanMaxSimilarSignalDifferencePPM/1E6), prevMZ * (1+interScanMaxSimilarSignalDifferencePPM/1E6), prevMZ)
+                if ind != -1 and pos <_EICWindow:
+                    eic[pos] = ints[cScanInd, ind]
+                    prevMZ = mzs[cScanInd, ind]
+                else:
+                    break
+            pos = pos + 1
+
 
         _SavitzkyGolayFilterSmooth_kernel(eic, eicSmoothed, _EICWindowSmoothed)
 
         a = int(round(_EICWindowSmoothed/2))
         e = int(round(_EICWindow/2))
-        
         ## update apexInd to match derivative
         run = True
         while run:
@@ -343,12 +355,12 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
                 a = a + 1
             else:
                 run = False
-        
+
         ## find left infliction and border scans
         prevDer = 0
         leftOffset = 0
         run = 1
-        while run and leftOffset < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0:
+        while run and leftOffset+1 < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0:
             der = eicSmoothed[a - leftOffset - 1] / eicSmoothed[a - leftOffset]
             if der > prevDer and eic[e - leftOffset - 1] > 0:
                 leftOffset = leftOffset + 1
@@ -358,8 +370,12 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         inflLeftOffset = leftOffset 
         infDer = prevDer
         run = 1
-        while run and leftOffset < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0:
-            if eicSmoothed[a - leftOffset] - eicSmoothed[a - leftOffset - 1] > 0 and eic[e - leftOffset - 1] > 0:
+        while run and leftOffset+1 < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0:
+            change = eicSmoothed[a - leftOffset] - eicSmoothed[a - leftOffset - 1]
+            ratioBA = 0
+            if eic[e] > 0:
+                ratioBA = eic[e - leftOffset - 1] / eic[e]
+            if change > 0 and ratioBA >= 0.01 and eic[e - leftOffset - 1] > 0:
                 leftOffset = leftOffset + 1
             else:
                 run = 0
@@ -368,7 +384,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         prevDer = 0
         rightOffset = 0
         run = 1
-        while run and rightOffset < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow:
+        while run and rightOffset+1 < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow:
             der = eicSmoothed[a + rightOffset + 1] / eicSmoothed[a + rightOffset]
             if der > prevDer and eic[e + rightOffset + 1] > 0:
                 rightOffset = rightOffset + 1
@@ -378,8 +394,12 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         inflRightOffset = rightOffset 
         infDer = prevDer
         run = 1
-        while run and rightOffset < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow:
-            if eicSmoothed[a + rightOffset] - eicSmoothed[a + rightOffset + 1] > 0 and eic[e + rightOffset + 1] > 0:
+        while run and rightOffset+1 < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow:
+            change = eicSmoothed[a + rightOffset] - eicSmoothed[a + rightOffset + 1]
+            ratioBA = 0
+            if eic[e] > 0: 
+                ratioBA = eic[e + rightOffset + 1] / eic[e]
+            if change > 0 and ratioBA >= 0.01 and eic[e + rightOffset + 1] > 0:
                 rightOffset = rightOffset + 1
             else:
                 run = 0
@@ -389,8 +409,6 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
         signalProps[ 9] = times[min(max(scanInd - inflLeftOffset , 0), times.shape[0]-1)]
         signalProps[10] = times[min(max(scanInd + inflRightOffset, 0), times.shape[0]-1)]
         signalProps[11] = times[min(max(scanInd + rightOffset    , 0), times.shape[0]-1)]
-        #signalProps[8]=signalProps[9]
-        #signalProps[11]=signalProps[10]
 
         ## calculate and test peak-width and height-ratio (apex to borders)
         peakWidth = rightOffset + leftOffset + 1
@@ -405,7 +423,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
                 else:
                     infRatioCount += 1
             testInd = testInd + 1
-        
+
         testInd = scanInd + round(rightOffset * 1.5)
         while testInd > scanInd:
             if testInd < times.shape[0]:
@@ -415,7 +433,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
                 else:
                     infRatioCount += 1
             testInd = testInd - 1
-            
+
         signalProps[7] = minWidth <= peakWidth <= maxWidth and ints[scanInd, peakInd] >= minimumIntensity and (ratio >= minRatioFactor or infRatioCount > 3)
     global _gradientDescendRTPeak_kernel
     _gradientDescendRTPeak_kernel = cuda.jit(device=True)(_gradientDescendRTPeak)
@@ -522,7 +540,7 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
                 cInstance = instanceInd - fromInd
                 ppmdev    = signalsProps[instanceInd, 5]
                 refRT     = signalsProps[instanceInd, 2]
-                refMZ     = signalsProps[instanceInd, 3]
+                refMZ     = signalsProps[instanceInd, 3]                
   
                 for y in range(mzSlices):
                     supports[y] = 0
@@ -534,14 +552,14 @@ def initializeCUDAFunctions(rtSlices = None, mzSlices = None, eicWindowPlusMinus
                     for x in range(rtSlices):
                         areaRTs[cInstance, x] = areaTimes[x]
                         for y in range(mzSlices):
-                            newData[cInstance, x, y] /= maxVal                    
+                            newData[cInstance, x, y] /= maxVal
                 
-                gdProps[cInstance, 0] = getBestMatch_kernel(areaTimes, refRT)
-                gdProps[cInstance, 1] = getBestMatch_kernel(supports , refMZ)
+                gdProps[cInstance, 0] = refRT
+                gdProps[cInstance, 1] = refMZ
                 gdProps[cInstance, 2] = getBestMatch_kernel(areaTimes, signalsProps[instanceInd,  8])
                 gdProps[cInstance, 3] = getBestMatch_kernel(areaTimes, signalsProps[instanceInd, 11])
-                gdProps[cInstance, 4] = getBestMatch_kernel(supports , refMZ * (1 - ppmdev/1E6))
-                gdProps[cInstance, 5] = getBestMatch_kernel(supports , refMZ * (1 + ppmdev/1E6))
+                gdProps[cInstance, 4] = getBestMatch_kernel(supports , refMZ * (1 - ppmdev/2/1E6))
+                gdProps[cInstance, 5] = getBestMatch_kernel(supports , refMZ * (1 + ppmdev/2/1E6))
     global renovatePeaksToArea
     renovatePeaksToArea = cuda.jit()(_renovatePeaksToArea)
     
@@ -732,10 +750,10 @@ def preProcessChromatogram(mzxml, fileIdentifier, intraScanMaxAdjacentSignalDiff
                     gdProps = d_gdProps.copy_to_host()
 
                     use = areaRTs[:,0] > -10
-                    pickle.dump({"lcmsArea": newData[use,:,:], 
-                                 "areaRTs" : areaRTs[use,:], 
-                                 "areaMZs" : areaMZs[use,:],
-                                 "gdProps" : gdProps[use, :]}, 
+                    pickle.dump({"LCHRMSArea": newData[use,:,:], 
+                                 "areaRTs"   : areaRTs[use,:], 
+                                 "areaMZs"   : areaMZs[use,:],
+                                 "gdProps"   : gdProps[use, :]}, 
                                 open(os.path.join(exportPath, "%s%d.pickle"%(instancePrefix, outVal)), "wb"))
 
                     cur += batchSize

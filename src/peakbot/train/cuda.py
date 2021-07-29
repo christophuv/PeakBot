@@ -105,7 +105,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         
         for ri in range(peaks.shape[0]):
             oInd = int(peaks[ri,5])
-            peaks[ri, 0:5] = fpeaks[oInd, [2,3,8,11,5]]
+            peaks[ri, 0:5] = fpeaks[oInd, [2,3,8,11,5]] #RT, MZ, leftRTBorder, rightRTBorder, PPMdevMZProfile
         peaks = np.ascontiguousarray(peaks[:,0:5])
         
         if verbose:
@@ -149,7 +149,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             foundMZ += 1
                             mzSum += mzs[scanInd, peakInd]
                             
-                            mzdev = peakbot.cuda._gradientDescendMZProfile_kernel(mzs, ints, times, peaksCount, scanInd, peakInd, maxmzDiffPPMAdjacentProfileSignal)
+                            meanmz, mzdev = peakbot.cuda._gradientDescendMZProfile_kernel(mzs, ints, times, peaksCount, scanInd, peakInd, maxmzDiffPPMAdjacentProfileSignal)
                             if mzdev > 0:
                                 foundDev += 1
                                 devSum += mzdev
@@ -282,6 +282,42 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         return rightNot
     _rightNot_kernel = cuda.jit(device=True)(_rightNot)
     
+    
+
+    def _getAsymmetricEllipse(mat, instanceInd, xcInd, ycInd, leftWidth, rightWidth, heightUp, heightDown):
+        a = math.sqrt(math.pow(leftWidth,2) + math.pow(heightUp,2))
+        for x in range(max(0, xcInd - leftWidth - 2), min(mat.shape[1], xcInd + 2)):
+            for y in range(max(0, ycInd - 2), min(mat.shape[2], ycInd + heightUp + 2)):
+                xa = x - xcInd
+                ya = y - ycInd
+                if math.pow(xa, 2)/math.pow(a,2) + math.pow(ya,2)/math.pow(heightUp,2) <= 0.25:
+                    mat[instanceInd, x, y] = 1
+                    
+        a = math.sqrt(math.pow(leftWidth,2) + math.pow(heightDown,2))
+        for x in range(max(0, xcInd - leftWidth - 2), min(mat.shape[1], xcInd + 2)):
+            for y in range(max(0, ycInd - heightDown - 2), min(mat.shape[2], ycInd + 2)):
+                xa = x - xcInd
+                ya = y - ycInd
+                if math.pow(xa, 2)/math.pow(a,2) + math.pow(ya,2)/math.pow(heightDown,2) <= 0.25:
+                    mat[instanceInd, x, y] = 1
+        
+        a = math.sqrt(math.pow(rightWidth,2) + math.pow(heightUp,2))
+        for x in range(max(0, xcInd - 2), min(mat.shape[1], xcInd + rightWidth + 2)):
+            for y in range(max(0, ycInd - 2), min(mat.shape[2], ycInd + heightUp + 2)):
+                xa = x - xcInd
+                ya = y - ycInd
+                if math.pow(xa, 2)/math.pow(a,2) + math.pow(ya,2)/math.pow(heightUp,2) <= 0.25:
+                    mat[instanceInd, x, y] = 1
+        
+        a = math.sqrt(math.pow(rightWidth,2) + math.pow(heightDown,2))
+        for x in range(max(0, xcInd - 2), min(mat.shape[1], xcInd + rightWidth + 2)):
+            for y in range(max(0, ycInd - heightDown - 2), min(mat.shape[2], ycInd + 2)):
+                xa = x - xcInd
+                ya = y - ycInd
+                if math.pow(xa, 2)/math.pow(a,2) + math.pow(ya,2)/math.pow(heightDown,2) <= 0.25:
+                    mat[instanceInd, x, y] = 1
+    _getAsymmetricEllipse_kernel = cuda.jit(device=True)(_getAsymmetricEllipse)
+    
     ## peaks: list of arrays with the elements:
     ##        rt, mz,leftRTBorder, rightRTBorder, mzDeviation
     ##
@@ -309,8 +345,8 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         meanDifferenceScans = s / times.shape[0]
                 
         for instanceInd in range(lInd, instances.shape[0], lLen):
-            oRTShift = 0 #xoroshiro128p_uniform_float32(rng_states, lInd) * rtSlices / 8
-            oMZShift = 0 #xoroshiro128p_uniform_float32(rng_states, lInd) * 5
+            oRTShift = xoroshiro128p_uniform_float32(rng_states, lInd) * 2*rtSlices/16 - (rtSlices/16) 
+            oMZShift = xoroshiro128p_uniform_float32(rng_states, lInd) * 5 - 2.5
             for populationInd in range(0, math.ceil(xoroshiro128p_uniform_float32(rng_states, lInd)*maxPopulation)):
                 ind        = -1
                 shiftRT    = 0
@@ -337,17 +373,15 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         ind       = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(peaks.shape[0]-1))
                         centerRT  = peaks[ind, 0]
                         centerMZ  = peaks[ind, 1]
-                        mzDevPPM  = peaks[ind, 4] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
+                        mzDevPPM  = peaks[ind, 4]
                         devMult   = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
-                        mzLow     = peaks[ind, 1] * (1 - mzDevPPM * devMult / 2 / 1E6)
-                        mzHigh    = peaks[ind, 1] * (1 + mzDevPPM * devMult / 2 / 1E6)
                         
-                        mpRT      = centerRT
-                        mpMZ      = peaks[ind,1]
-                        mpRTLeft  = peaks[ind,2]
-                        mpRTRight = peaks[ind,3]
-                        mpMZLow   = peaks[ind, 1] * (1 - peaks[ind, 4] / 2 / 1E6)
-                        mpMZHigh  = peaks[ind, 1] * (1 + peaks[ind, 4] / 2 / 1E6)
+                        mpRT      = peaks[ind, 0]
+                        mpMZ      = peaks[ind, 1]
+                        mpRTLeft  = peaks[ind, 2]
+                        mpRTRight = peaks[ind, 3]
+                        mpMZLow   = mpMZ * (1 - peaks[ind, 4] / 2 / 1E6)
+                        mpMZHigh  = mpMZ * (1 + peaks[ind, 4] / 2 / 1E6)
                     
                     ## Wall
                     elif typR <= 5:
@@ -355,17 +389,15 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         ind       = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(walls.shape[0]-1))
                         centerRT  = walls[ind, 1] + (walls[ind, 2]-walls[ind, 1]) * xoroshiro128p_uniform_float32(rng_states, lInd)
                         centerMZ  = walls[ind, 0]
-                        mzDevPPM  = walls[ind, 3] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
+                        mzDevPPM  = walls[ind, 3]
                         devMult   = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
-                        mzLow     = walls[ind, 0] * (1 - mzDevPPM * devMult / 2 / 1E6)
-                        mzHigh    = walls[ind, 0] * (1 + mzDevPPM * devMult / 2 / 1E6)
                         
                         mpRT      = centerRT
                         mpMZ      = walls[ind,0]
                         mpRTLeft  = walls[ind,1]
                         mpRTRight = walls[ind,2]
-                        mpMZLow   = walls[ind, 0] * (1 - mzDevPPM / 2 / 1E6)
-                        mpMZHigh  = walls[ind, 0] * (1 + mzDevPPM / 2 / 1E6)
+                        mpMZLow   = mpMZ * (1 - walls[ind, 3] / 2 / 1E6)
+                        mpMZHigh  = mpMZ * (1 + walls[ind, 3] / 2 / 1E6)
                         
                     ## Background
                     elif typR <= 6:
@@ -373,17 +405,27 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         ind       = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(backgrounds.shape[0]-1))
                         centerRT  = backgrounds[ind, 0]
                         centerMZ  = backgrounds[ind, 1]
-                        mzDevPPM  = backgrounds[ind, 2] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
+                        mzDevPPM  = backgrounds[ind, 2]
                         devMult   = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
-                        mzLow     = backgrounds[ind, 1] * (1 - mzDevPPM * devMult / 2 / 1E6)
-                        mzHigh    = backgrounds[ind, 1] * (1 + mzDevPPM * devMult / 2 / 1E6)
                         
                         mpRT      = centerRT
                         mpMZ      = peaks[ind,1]
                         mpRTLeft  = centerRT - 8 * meanDifferenceScans
                         mpRTRight = centerRT + 8 * meanDifferenceScans
-                        mpMZLow   = backgrounds[ind, 1] * (1 - mzDevPPM / 2 / 1E6)
-                        mpMZHigh  = backgrounds[ind, 1] * (1 + mzDevPPM / 2 / 1E6)
+                        mpMZLow   = mpMZ * (1 - backgrounds[ind, 2] / 2 / 1E6)
+                        mpMZHigh  = mpMZ * (1 + backgrounds[ind, 2] / 2 / 1E6)
+                            
+                    #bestScanInd = peakbot.cuda.getBestMatch_kernel(times, centerRT + oRTShift)
+                    #if bestScanInd == -1:
+                    #    continue
+                    #bestMZInd = peakbot.cuda.getBestMatch_kernel(mzs[bestScanInd,0:peaksCount[bestScanInd]], centerMZ + oMZShift)
+                    #if bestMZInd == -1:
+                    #    continue
+                    #
+                    #mzLow     = mzs[bestScanInd, bestMZInd] * (1 - mzDevPPM * devMult / 2 / 1E6)
+                    #mzHigh    = mzs[bestScanInd, bestMZInd] * (1 + mzDevPPM * devMult / 2 / 1E6)
+                    mzLow     = mpMZ * (1 - mzDevPPM * devMult / 2 / 1E6) * (1 + oMZShift / 1E6)
+                    mzHigh    = mpMZ * (1 + mzDevPPM * devMult / 2 / 1E6) * (1 + oMZShift / 1E6)
                 
                 ## distraction augmentation not in center of the area
                 if populationInd > 0:
@@ -407,10 +449,10 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             cmzDiff  = mpMZ - peaks[sind, 1]
                             centerMZ = peaks[sind, 1] + mzOffset
                             
-                            if ((mzOffset > 0 and (peaks[sind, 1] + mzOffset) * (1 - mzDevPPM / 2 / 2 / 1E6)+cmzDiff > mpMZHigh) or \
-                                (mzOffset <= 0 and (peaks[sind, 1] + mzOffset) * (1 + mzDevPPM / 2 / 2 / 1E6)+cmzDiff < mpMZLow)) and \
-                               ((peaks[sind, 0] < mpRT and (peaks[sind,3] < mpRTLeft or 0.15 <= (peaks[sind,3]+crtDiff-rtOffset - mpRTLeft) / (mpRT - (peaks[sind,0]+crtDiff-rtOffset)) <= 0.75)) or \
-                                (peaks[sind, 0] > mpRT and (mpRTRight < peaks[sind,2] or 0.15 <= (mpRTRight - peaks[sind,2]+crtDiff-rtOffset) / ((peaks[sind,0]+crtDiff-rtOffset) - mpRT) <= 0.75))):
+                            if ((mzOffset > 0 and (peaks[sind, 1] + mzOffset) * (1 - mzDevPPM / 2 / 1E6)+cmzDiff > mpMZHigh) or \
+                                (mzOffset <= 0 and (peaks[sind, 1] + mzOffset) * (1 + mzDevPPM / 2 / 1E6)+cmzDiff < mpMZLow)) or \
+                               ((peaks[sind, 0] < mpRT and peaks[sind,3] < mpRTLeft) or \
+                                (peaks[sind, 0] > mpRT and mpRTRight < peaks[sind,2])):
                                 ok = True
                         
                         if not ok:
@@ -454,7 +496,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             mzLow    = (backgrounds[sind, 1] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
                             mzHigh   = (backgrounds[sind, 1] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
                             
-                            crtDiff  = mpRT - backgrounds[sind, 0]
                             cmzDiff  = mpMZ - backgrounds[sind, 1]
                             centerMZ = backgrounds[sind, 1] + mzOffset
                             
@@ -468,7 +509,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                 
                 ## calculate supports for the addition and save them
                 for y in range(mzSlices):
-                    supports[y] = (mzLow + (mzHigh-mzLow)*(y/(mzSlices-1)))*(1+oMZShift/1E6)
+                    supports[y] = mzLow + (mzHigh-mzLow)*y/(mzSlices-1)
                     areaMZs[instanceInd, y] = supports[y]
 
                 ## combine area with previous area
@@ -485,15 +526,24 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                     for y in range(mzSlices):
                         if temp[0,x,y] > 0:
                             instances[instanceInd, x, y] = instances[instanceInd, x, y] + (temp[0,x,y] / maxInt * (1 + xoroshiro128p_uniform_float32(rng_states, lInd)*randomnessFactor) * r)
-                            if populationInd == 0:
-                                single[instanceInd, x, y] = temp[0,x,y] / maxInt
+                
+                if populationInd == 0 and typR < 4:
+                    ta = peakbot.cuda.getBestMatch_kernel(areaTimes, mpRT)
+                    tb = peakbot.cuda.getBestMatch_kernel(supports , mpMZ)
+                    _getAsymmetricEllipse_kernel(single, instanceInd, 
+                                                 ta, 
+                                                 tb,
+                                                 ta - peakbot.cuda.getBestMatch_kernel(areaTimes, mpRTLeft),
+                                                 peakbot.cuda.getBestMatch_kernel(areaTimes, mpRTRight) - ta,
+                                                 tb - peakbot.cuda.getBestMatch_kernel(supports , mpMZLow),
+                                                 peakbot.cuda.getBestMatch_kernel(supports , mpMZHigh) - tb)
                 
                 ## Add isomeric compounds if the center peak is a chromatographic peak
                 if populationInd == 0 and typR <= 4:                    
                     minIOU, maxIOU, remain = 0.15, 0.33, 0.5
                     
                     ## add isomeric peak on the left side
-                    if 0.7 < typR <= 2 or 2 < typR <= 3:
+                    if 1 < typR <= 2 or 2 < typR <= 3:
                         tries = 40
                         ok    = False
                         while tries > 0 and not ok:
@@ -506,10 +556,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             mzHigh   = peaks[sind, 1] * (1 + mzDevPPM * devMult / 2 / 1E6)                            
                             crtDiff  = peaks[ind,0] - peaks[sind,0]
                             
-                            #if peaks[sind,0]+crtDiff-rtOffset < peaks[ind,2] and \
-                            #    peaks[sind,3]+crtDiff-rtOffset >= peaks[ind,2] and \
-                            #    0.15 <= (peaks[sind,3]+crtDiff-rtOffset - peaks[ind,2]) / (peaks[ind,0] - (peaks[sind,0]+crtDiff-rtOffset)) <= 0.75 :
-                            #    ok = True
                             if peaks[sind,0]+crtDiff-rtOffset < peaks[ind,0] and peaks[sind,3]+crtDiff-rtOffset > peaks[ind,2] and\
                                 minIOU <= _iou_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1, 
                                                       peaks[ind,2], peaks[ind,3], 0, 1) <= maxIOU and \
@@ -554,7 +600,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                                 typ = 2
                     
                     ## add isomeric peak on the right side
-                    if 0.7 < typR <= 2 or 3 < typR <= 4:
+                    if 1 < typR <= 2 or 3 < typR <= 4:
                         tries = 40
                         ok    = False
                         while tries > 0 and not ok:
@@ -567,10 +613,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             mzHigh   = peaks[sind, 1] * (1 + mzDevPPM * devMult / 2 / 1E6)                            
                             crtDiff  = peaks[ind,0] - peaks[sind,0]
                             
-                            #if peaks[sind,0]+crtDiff+rtOffset > peaks[ind,3] and \
-                            #    peaks[sind,2]+crtDiff+rtOffset <= peaks[ind,3] and \
-                            #    0.15 <= (peaks[ind,3] - (peaks[sind,2]+crtDiff+rtOffset)) / (peaks[sind,0]+crtDiff+rtOffset - peaks[ind,0]) <= 0.75:
-                            #    ok = True
                             if peaks[sind,0]+crtDiff+rtOffset > peaks[ind,0] and peaks[sind,2]+crtDiff+rtOffset < peaks[ind,3] and \
                                 minIOU <= _iou_kernel(peaks[ind,2], peaks[ind,3], 0, 1, 
                                                       peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) <= maxIOU and \
@@ -630,6 +672,11 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         boxes[instanceInd, 2]   = peakbot.cuda.getBestMatch_kernel(supports , mpMZLow)
                         boxes[instanceInd, 3]   = peakbot.cuda.getBestMatch_kernel(supports , mpMZHigh)
                         
+                        for x in range(rtSlices):
+                            for y in range(mzSlices):
+                                if x < peakbot.cuda.getBestMatch_kernel(areaTimes, mpRTLeft) or x > peakbot.cuda.getBestMatch_kernel(areaTimes, mpRTRight) or y < peakbot.cuda.getBestMatch_kernel(supports , mpMZLow) or y > peakbot.cuda.getBestMatch_kernel(supports , mpMZHigh):
+                                    single[instanceInd, x, y] = 0
+                        
                     else:
                         centers[instanceInd, 0] = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(rtSlices))
                         centers[instanceInd, 1] = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(mzSlices))
@@ -637,6 +684,10 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         boxes[instanceInd, 1]   = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(rtSlices))
                         boxes[instanceInd, 2]   = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(mzSlices))
                         boxes[instanceInd, 3]   = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(mzSlices))
+                        
+                        for x in range(rtSlices):
+                            for y in range(mzSlices):
+                                single[instanceInd, x, y] = 0
         
             ## Scale to a maximum intensity of 1
             mVal = 0

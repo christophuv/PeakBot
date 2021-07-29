@@ -98,15 +98,20 @@ try:
     from psutil import virtual_memory
 
     mem = virtual_memory()
-    print("  | .. %.1f GB main memory"%(mem.total/1000/1000/1000))
+    print("  | .. Main memory: %.1f GB"%(mem.total/1000/1000/1000))
 except:
     print("  | .. fetching main memory info failed")
 
 try:
+    from numba import cuda as ca
+    print("  | .. GPU-device: ", str(ca.get_current_device().name), sep="")
+    
     gpus = tf.config.experimental.list_physical_devices()
     for gpu in gpus:
         print("  | .. TensorFlow device: Name '%s', type '%s'"%(gpu.name, gpu.device_type))
 except:
+    import traceback
+    traceback.print_exc()
     print("  | .. fetching GPU info failed")
 
 
@@ -195,7 +200,7 @@ def modelAdapterTestGenerator(datGen, newBatchSize = None, verbose=False):
 #####################################
 ### PeakBot additional methods
 ##
-def batch_iou(boxes1, boxes2):
+def iou(boxes1, boxes2):
     ## from https://github.com/paperclip/cat-camera/blob/master/object_detection_2/core/post_processing.py
     """Calculates the overlap between proposal and ground truth boxes.
     Some `boxes2` may have been padded. The returned `iou` tensor for these
@@ -463,12 +468,10 @@ class PeakBot():
         #    if i > 0:
         #        x = tf.keras.layers.Add()([x, cLayers[i]])
         #    x = tf.keras.layers.Activation("relu")(x)
-        #        
+                
         #x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
         #x = tf.keras.layers.Conv2D(1, (3,3))(x)
         #x = tf.keras.layers.BatchNormalization()(x)
-        #maxV = tf.keras.layers.maximum(x)
-        #x = tf.math.divide(x, maxV, name="single")
         
         #x = tf.keras.layers.Activation("sigmoid", name="single")(x)
         #single = x
@@ -486,7 +489,7 @@ class PeakBot():
             print("  | .. ")
             print("  | ")
 
-        self.model = tf.keras.models.Model(input_, [peakType, center, box])
+        self.model = tf.keras.models.Model(input_, [peakType, center, box]) #, single])
     
     @timeit
     def compileModel(self, learningRate = Config.LEARNINGRATESTART):
@@ -502,7 +505,7 @@ class PeakBot():
             metrics      = {
                         "peakType" : ["categorical_accuracy", pF1, pTPR, pFPR],
                         "center"   : [],
-                        "box"      : [batch_iou],
+                        "box"      : [iou],
                       },
             loss_weights = {
                         "peakType" : 1,
@@ -557,7 +560,7 @@ class PeakBot():
         return history
     
     def loadFromFile(self, modelFile):
-        self.model = tf.keras.models.load_model(modelFile, custom_objects = {"batch_iou": batch_iou})
+        self.model = tf.keras.models.load_model(modelFile, custom_objects = {"iou": iou})
     
     def saveModelToFile(self, modelFile):
         self.model.save(modelFile)
@@ -657,7 +660,7 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         for valInstance in addValidationInstances:
     
             se = valInstance["name"]
-            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_batch_iou"]:
+            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_iou"]:
                 val = hist[se + "_" + metric]
                 newRow = pd.Series({"model": modelName, "set": se, "metric": metric, "value": val})
                 metricesAddValDS = metricesAddValDS.append(newRow, ignore_index=True)
@@ -699,14 +702,15 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
         print("  | .. loading PeakBot model '%s'"%(modelPath))
         print("  | .. detecting peaks in the areas in the folder '%s'"%(pathFrom))
         
-    model = tf.keras.models.load_model(modelPath, custom_objects = {"batch_iou": batch_iou,"recall": recall, 
+    model = tf.keras.models.load_model(modelPath, custom_objects = {"iou": iou,"recall": recall, 
                                                                     "precision": precision, "specificity": specificity, 
                                                                     "negative_predictive_value": negative_predictive_value, 
                                                                     "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR})
     
     for fi in tqdm.tqdm(os.listdir(pathFrom), desc="  | .. detecting chromatographic peaks", disable=not verbose):
         l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
-        lcmsArea = l["lcmsArea"]
+        print(l.keys())
+        lcmsArea = l["LCHRMSArea"]
         for j in range(lcmsArea.shape[0]):
             m = np.max(lcmsArea[j,:,:])
             if m > 0:
@@ -738,6 +742,12 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
                         pmzstart = l["areaMZs"][j, pmzstartInd]
                     if 0 <= pmzendInd < l["areaMZs"].shape[1]:
                         pmzend = l["areaMZs"][j, pmzendInd]
+                        
+                    if "gdProps" in l.keys():
+                        gdrt, gdmz, gdrtStartInd, gdrtEndInd, gdmzStartInd, gdmzEndInd = [i for i in l["gdProps"][j,:]]
+
+                        prt = gdrt
+                        pmz = gdmz
 
                     if prt!=-1 and pmz!=-1 and prtstart!=-1 and prtend!=-1 and pmzstart!=-1 and pmzend!=-1:
                         peaks.append([prt, pmz, prtstart, prtend, pmzstart, pmzend])
@@ -802,22 +812,22 @@ def exportPeakBotResultsTSV(peaks, toFile):
         fout.write("\n")
 
         for j, p in enumerate(peaks):
-            rt, mz, rtstart, rtend, mzstart, mzend = p[0], p[1], p[2], p[3], p[4], p[5]
+            rt, mz, inte, rtstart, rtend, mzstart, mzend = p[0], p[1], 0, p[2], p[3], p[4], p[5]
             fout.write("\t".join((str(s) for s in [j, rt, mz, rtstart, rtend, mzstart, mzend])))
             fout.write("\n")
 
 @timeit
-def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, threshold=0.01):
-    cur = 1
+def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, threshold=0.01, expFrom = 0, expTo = 1E9):
+    cur = 0
     import plotnine as p9
     import pandas as pd
+    
     for fi in tqdm.tqdm(os.listdir(pathFrom)):
         l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
         
         lcmsArea = l["LCHRMSArea"]
         areaRTs  = l["areaRTs"]
         areaMZs  = l["areaMZs"]
-        single   = l["single"]
         
         pred = None
         if model is not None:
@@ -825,122 +835,175 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
             
         for j in range(lcmsArea.shape[0]):
             
-            maxExport = maxExport - 1
-            if maxExport < 0:
-                return 
-
-            p9.options.figure_size = (14,5)
-
-            rts = []
-            mzs = []
-            ints = []
-            alphas = []
-            typs = []
+            if expFrom <= cur <= expTo:
             
-            for rowi in range(lcmsArea.shape[1]):
-                for coli in range(lcmsArea.shape[2]):
-                    if lcmsArea[j, rowi, coli] > threshold:
-                        rts.append(areaRTs[j, rowi])
-                        mzs.append(areaMZs[j, coli])
-                        ints.append(lcmsArea[j, rowi, coli])
-                        typs.append("LCHRMS area (>%f)"%threshold)
-                        alphas.append(0.25)
-                    if single[j, rowi, coli] > threshold:
-                        rts.append(areaRTs[j, rowi])
-                        mzs.append(areaMZs[j, coli])
-                        ints.append(single[j, rowi, coli])
-                        typs.append("single (>%f)"%threshold)
-                        alphas.append(0.25)
+                maxExport = maxExport - 1
+                if maxExport < 0:
+                    return 
 
-            dat = pd.DataFrame({"rts": rts, "mzs": mzs, "ints": ints, "typ": typs, "alpha": alphas})
-            ## Plot LCMS area and mask
-            plot = (p9.ggplot(dat, p9.aes("rts", "mzs", alpha="alpha", colour="ints")) + 
-                    p9.geom_point() + 
-                    p9.facet_wrap("~typ", ncol=6) +
-                    p9.xlim(areaRTs[j,0], areaRTs[j, areaRTs.shape[1]-1]) + p9.ylim(areaMZs[j,0], areaMZs[j, areaMZs.shape[1]-1])
-                   )
-            ## Plot bounding-box and center
-            plot = (plot + p9.scale_alpha(guide = None))
-            
-            rt, mz, rtLeftBorder, rtRightBorder, mzLowest, mzHighest = -1, -1, -1, -1, -1, -1
-            typ = int(l["peakType"][j,0]) 
-            apexRTInd, apexMZInd = [int(i) for i in l["center"][j,:]]
-            rtLeftBorderInd, rtRightBorderInd, mzLowestInd, mzHighestInd = [int(i) for i in l["box"][j,:]]
-            if 0 <= apexRTInd < l["areaRTs"].shape[1]:
-                rt = l["areaRTs"][j,apexRTInd]
-            if 0 <= rtLeftBorderInd < l["areaRTs"].shape[1]:
-                rtLeftBorder = l["areaRTs"][j,rtLeftBorderInd]
-            if 0 <= rtRightBorderInd < l["areaRTs"].shape[1]:
-                rtRightBorder = l["areaRTs"][j,rtRightBorderInd]
-            
-            if 0 <= apexMZInd < l["areaMZs"].shape[1]:
-                mz = l["areaMZs"][j,apexMZInd]
-            if 0 <= mzLowestInd < l["areaMZs"].shape[1]:
-                mzLowest = l["areaMZs"][j,mzLowestInd]
-            if 0 <= mzHighestInd < l["areaMZs"].shape[1]:
-                mzHighest = l["areaMZs"][j,mzHighestInd]
-                                                
-            plot = (plot + p9.geom_rect(xmin = rtLeftBorder, 
-                                        xmax = rtRightBorder, 
-                                        ymin = mzLowest, 
-                                        ymax = mzHighest, 
-                                        fill=None, 
-                                        color="yellowgreen", 
-                                        linetype="solid", 
-                                        size=0.1) +
-                           p9.geom_text(label="X", 
-                                        x=rt, 
-                                        y=mz, 
-                                        color="yellowgreen") )
-            
-            prt, pmz = -1, -1
-            prtstart, prtend, pmzstart, pmzend = -1, -1, -1, -1
-            if pred is not None:
-                print(pred[0][j,:], pred[1][j,:], pred[2][j,:])
-                pisFullPeak, pisPartPeak, phasCoElutionLeft, phasCoElutionRight, pisBackground, pisWall = [bool(i) for i in np.squeeze(np.eye(6)[np.argmax(np.array(pred[0][j,:])).reshape(-1)])]
-                prtInd, pmzInd = [round(i) for i in pred[1][j,:]]
-                prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]                    
+                title = None
 
-                if pisFullPeak or pisPartPeak or phasCoElutionLeft or phasCoElutionRight:
-                    try:
-                        ## properties: rt, mz, rtFirstSlice, rtLastSlice, mzFirstSlice, mzLastSlice, ppmdev, leftRTBorder, rightRTBorder                        
-                        if 0 <= prtInd < l["areaRTs"].shape[1]:
-                            prt = l["areaRTs"][j,prtInd]
-                        if 0 <= pmzInd < l["areaMZs"].shape[1]:
-                            pmz = l["areaMZs"][j,pmzInd]
+                p9.options.figure_size = (14,5)
 
-                        if 0 <= prtstartInd < l["areaRTs"].shape[1]:
-                            prtstart = l["areaRTs"][j,prtstartInd]
-                        if 0 <= prtendInd < l["areaRTs"].shape[1]:
-                            prtend = l["areaRTs"][j, prtendInd]
-                            
-                        if 0 <= pmzstartInd < l["areaMZs"].shape[1]:
-                            pmzstart = l["areaMZs"][j, pmzstartInd]
-                        if 0 <= pmzendInd < l["areaMZs"].shape[1]:
-                            pmzend = l["areaMZs"][j, pmzendInd]
-                                                
-                        plot = (plot + p9.geom_rect(xmin = prtstart, 
-                                                    xmax = prtend, 
-                                                    ymin = pmzstart, 
-                                                    ymax = pmzend, 
-                                                    fill=None, 
-                                                    color="firebrick", 
-                                                    linetype="solid", 
-                                                    size=0.1) +
-                                       p9.geom_text(label="X", 
-                                                    x=prt, 
-                                                    y=pmz, 
-                                                    color="firebrick") )
+                rts = []
+                mzs = []
+                ints = []
+                alphas = []
+                typs = []
 
-                    except:
-                        import traceback
-                        traceback.print_exc()
-                        errors += 1
-                    
-            plot = (plot + 
-                    p9.ggtitle("RT %.2f (box %.2f - %.2f)\nMZ %.4f (box %.4f - %.4f, %.1f ppm)\nType '%s'"%(prt, prtstart, prtend, pmz, pmzstart, pmzend, (pmzend-pmzstart)*1E6/pmz, ["Single peak", "Isomers earlier and later", "Isomer earlier", "Isomer later", "Background", "Wall"][np.argmax(np.array(pred[0][j,:]))])))
-            
-            p9.ggsave(plot=plot, filename=os.path.join(toFolder, "%d.png"%(cur)), height=7, width=12)
+                for rowi in range(lcmsArea.shape[1]):
+                    for coli in range(lcmsArea.shape[2]):
+                        if lcmsArea[j, rowi, coli] > threshold:
+                            rts.append(areaRTs[j, rowi])
+                            mzs.append(areaMZs[j, coli])
+                            ints.append(lcmsArea[j, rowi, coli])
+                            typs.append("LCHRMS area (>%f)"%threshold)
+                            alphas.append(0.25)
+                        if "single" in l.keys() and l["single"][j, rowi, coli] > threshold:
+                            rts.append(areaRTs[j, rowi])
+                            mzs.append(areaMZs[j, coli])
+                            ints.append(l["single"][j, rowi, coli])
+                            typs.append("single (>%f)"%threshold)
+                            alphas.append(0.25)
+
+                if pred is not None and len(pred)>3:
+                    single = pred[3][j]
+                    for rowi in range(lcmsArea.shape[1]):
+                        for coli in range(lcmsArea.shape[2]):
+                            if pred[3][j, rowi, coli, 0]>0.5:
+                                rts.append(areaRTs[j, rowi])
+                                mzs.append(areaMZs[j, coli])
+                                ints.append(1)
+                                typs.append("pred - mask")
+                                alphas.append(0.25)
+
+                dat = pd.DataFrame({"rts": rts, "mzs": mzs, "Intensity": ints, "typ": typs, "alpha": alphas})
+                ## Plot LCMS area and mask
+                plot = (p9.ggplot(dat, p9.aes("rts", "mzs", alpha="alpha", colour="Intensity")) + 
+                        p9.geom_point() + 
+                        p9.facet_wrap("~typ", ncol=6) +
+                        p9.xlim(areaRTs[j,0], areaRTs[j, areaRTs.shape[1]-1]) + p9.ylim(areaMZs[j,0], areaMZs[j, areaMZs.shape[1]-1])
+                       )
+                ## Plot bounding-box and center
+                plot = (plot + p9.scale_alpha(guide = None))
+
+                if "peakType" in l.keys():
+                    rt, mz, rtLeftBorder, rtRightBorder, mzLowest, mzHighest = -1, -1, -1, -1, -1, -1
+                    typ = int(l["peakType"][j,0]) 
+                    apexRTInd, apexMZInd = [int(i) for i in l["center"][j,:]]
+                    rtLeftBorderInd, rtRightBorderInd, mzLowestInd, mzHighestInd = [int(i) for i in l["box"][j,:]]
+                    if 0 <= apexRTInd < l["areaRTs"].shape[1]:
+                        rt = l["areaRTs"][j,apexRTInd]
+                    if 0 <= rtLeftBorderInd < l["areaRTs"].shape[1]:
+                        rtLeftBorder = l["areaRTs"][j,rtLeftBorderInd]
+                    if 0 <= rtRightBorderInd < l["areaRTs"].shape[1]:
+                        rtRightBorder = l["areaRTs"][j,rtRightBorderInd]
+
+                    if 0 <= apexMZInd < l["areaMZs"].shape[1]:
+                        mz = l["areaMZs"][j,apexMZInd]
+                    if 0 <= mzLowestInd < l["areaMZs"].shape[1]:
+                        mzLowest = l["areaMZs"][j,mzLowestInd]
+                    if 0 <= mzHighestInd < l["areaMZs"].shape[1]:
+                        mzHighest = l["areaMZs"][j,mzHighestInd]
+
+                    plot = (plot + p9.geom_rect(xmin = rtLeftBorder, 
+                                                xmax = rtRightBorder, 
+                                                ymin = mzLowest, 
+                                                ymax = mzHighest, 
+                                                fill=None, 
+                                                color="yellowgreen", 
+                                                linetype="solid", 
+                                                size=0.1) +
+                                   p9.geom_text(label="X", 
+                                                x=rt, 
+                                                y=mz, 
+                                                color="yellowgreen") )
+
+                    title = "" if title is None else title + "\n"
+                    title = title + "Ground truth: RT %.2f (box %.2f - %.2f), MZ %.4f (box %.4f - %.4f, %.1f ppm)"%(rt, rtLeftBorder, rtRightBorder, mz, mzLowest, mzHighest, (mzHighest-mzLowest)*1E6/mz)
+
+                if "gdProps" in l.keys():
+                    gdrtInd, gdmzInd, gdrtStartInd, gdrtEndInd, gdmzStartInd, gdmzEndInd = [int(i) for i in l["gdProps"][j,:]]
+                    gdrt, gdmz, gdrtstart, gdrtend, gdmzstart, gdmzend = -1, -1, -1, -1, -1, -1
+
+                    if 0 <= gdrtInd < l["areaRTs"].shape[1]:
+                        gdrt = l["areaRTs"][j,gdrtInd]
+                    if 0 <= gdmzInd < l["areaMZs"].shape[1]:
+                        gdmz = l["areaMZs"][j,gdmzInd]
+
+                    if 0 <= gdrtStartInd < l["areaRTs"].shape[1]:
+                        gdrtstart = l["areaRTs"][j,gdrtStartInd]
+                    if 0 <= gdrtEndInd < l["areaRTs"].shape[1]:
+                        gdrtend = l["areaRTs"][j, gdrtEndInd]
+
+                    if 0 <= gdmzStartInd < l["areaMZs"].shape[1]:
+                        gdmzstart = l["areaMZs"][j, gdmzStartInd]
+                    if 0 <= gdmzEndInd < l["areaMZs"].shape[1]:
+                        gdmzend = l["areaMZs"][j, gdmzEndInd]
+
+                    plot = (plot + p9.geom_rect(xmin = gdrtstart, 
+                                                xmax = gdrtend, 
+                                                ymin = gdmzstart, 
+                                                ymax = gdmzend, 
+                                                fill=None, 
+                                                color="orange", 
+                                                linetype="solid", 
+                                                size=0.1) +
+                                   p9.geom_text(label="X", 
+                                                x=gdrt, 
+                                                y=gdmz, 
+                                                color="orange"))
+
+                    title = "" if title is None else title + "\n"
+                    title = title + "Local maxima: RT %.2f (box %.2f - %.2f), MZ %.4f (box %.4f - %.4f, %.1f ppm)"%(gdrt, gdrtstart, gdrtend, gdmz, gdmzstart, gdmzend, (gdmzend-gdmzstart)*1E6/gdmz)
+
+                prt, pmz = -1, -1
+                prtstart, prtend, pmzstart, pmzend = -1, -1, -1, -1
+                if pred is not None:
+                    pisFullPeak, pisPartPeak, phasCoElutionLeft, phasCoElutionRight, pisBackground, pisWall = [bool(i) for i in np.squeeze(np.eye(6)[np.argmax(np.array(pred[0][j,:])).reshape(-1)])]
+                    prtInd, pmzInd = [round(i) for i in pred[1][j,:]]
+                    prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]                    
+
+                    if pisFullPeak or pisPartPeak or phasCoElutionLeft or phasCoElutionRight:
+                        try:
+                            ## properties: rt, mz, rtFirstSlice, rtLastSlice, mzFirstSlice, mzLastSlice, ppmdev, leftRTBorder, rightRTBorder                        
+                            if 0 <= prtInd < l["areaRTs"].shape[1]:
+                                prt = l["areaRTs"][j,prtInd]
+                            if 0 <= pmzInd < l["areaMZs"].shape[1]:
+                                pmz = l["areaMZs"][j,pmzInd]
+
+                            if 0 <= prtstartInd < l["areaRTs"].shape[1]:
+                                prtstart = l["areaRTs"][j,prtstartInd]
+                            if 0 <= prtendInd < l["areaRTs"].shape[1]:
+                                prtend = l["areaRTs"][j, prtendInd]
+
+                            if 0 <= pmzstartInd < l["areaMZs"].shape[1]:
+                                pmzstart = l["areaMZs"][j, pmzstartInd]
+                            if 0 <= pmzendInd < l["areaMZs"].shape[1]:
+                                pmzend = l["areaMZs"][j, pmzendInd]
+
+                            plot = (plot + p9.geom_rect(xmin = prtstart, 
+                                                        xmax = prtend, 
+                                                        ymin = pmzstart, 
+                                                        ymax = pmzend, 
+                                                        fill=None, 
+                                                        color="firebrick", 
+                                                        linetype="solid", 
+                                                        size=0.1) +
+                                           p9.geom_text(label="X", 
+                                                        x=prt, 
+                                                        y=pmz, 
+                                                        color="firebrick")) # + p9.geom_hline(yintercept=pmz)+p9.geom_vline(xintercept=prt))
+                        except:
+                            import traceback
+                            traceback.print_exc()
+
+                    title = "" if title is None else title + "\n"
+                    title = title + "Predicted   : RT %.2f (box %.2f - %.2f), MZ %.4f (box %.4f - %.4f, %.1f ppm); Type '%s'"%(prt, prtstart, prtend, pmz, pmzstart, pmzend, (pmzend-pmzstart)*1E6/pmz, ["Single peak", "Isomers earlier and later", "Isomer earlier", "Isomer later", "Background", "Wall"][np.argmax(np.array(pred[0][j,:]))])
+                plot = (plot + 
+                        p9.ggtitle(title) + p9.xlab("Retention time (seconds)") + p9.ylab("m/z"))
+
+                p9.ggsave(plot=plot, filename=os.path.join(toFolder, "%d.png"%(cur)), height=7, width=12)
             cur += 1
 
 
