@@ -6,6 +6,8 @@ import xml.parsers.expat
 from xml.dom.minidom import parse
 import numpy as np
 
+import pymzml
+
 from .MSScan import MS1Scan, MS2Scan
 
 
@@ -571,7 +573,7 @@ class Chromatogram():
         expat.ParseFile(open(filename_xml, 'rb'))
 
 
-    def parseMzMLFile(self, filename_xml, intensityCutoff, ignoreCharacterData):
+    def parseMzMLFile(self, filename_xml, intensityCutoff=-1, ignoreCharacterData=False):
 
         import pymzml
 
@@ -579,16 +581,12 @@ class Chromatogram():
 
         for specturm in run:
 
-            if "time array" in specturm.keys() or specturm["id"] is None:
-                continue
-
             try:
                 msLevel=int(specturm["ms level"])
             except :
                 print("Error: What is it?", specturm["id"], type(specturm), specturm)
                 continue
-
-
+            
             if msLevel == 1:
                 tmp_ms = MS1Scan()
             elif msLevel == 2:
@@ -598,24 +596,23 @@ class Chromatogram():
                 sys.exit(1)
 
             tmp_ms.id = int(specturm["id"])
-            tmp_ms.filter_line = specturm["filter string"]
 
-            tmp_ms.peak_count = len(specturm.peaks)
             tmp_ms.retention_time = specturm["scan time"]*60
-            #if tmp_ms.peak_count > 0:
+            tmp_ms.filter_line = ""
+            
             tmp_ms.total_ion_current = specturm["total ion current"]
             tmp_ms.list_size = 0
-            if "positive scan" in specturm.keys():
+            if specturm["positive scan"] is not None:
                 tmp_ms.polarity = "+"
-            elif "negative scan" in specturm.keys():
+            elif specturm["negative scan"] is not None:
                 tmp_ms.polarity = "-"
             else:
                 raise RuntimeError("No polarity for scan available")
-            tmp_ms.mz_list = [p[0] for p in specturm.peaks]
-            tmp_ms.intensity_list = [p[1] for p in specturm.peaks]
-            tmp_ms.msInstrumentID = ""
-
-
+                
+            tmp_ms.mz_list = [p[0] for p in specturm.peaks("raw")]
+            tmp_ms.intensity_list = [p[1] for p in specturm.peaks("raw")]
+            tmp_ms.peak_count = len(tmp_ms.mz_list)
+            
             if msLevel == 1:
                 self.MS1_list.append(tmp_ms)
             elif msLevel == 2:

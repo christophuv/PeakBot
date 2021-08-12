@@ -21,16 +21,13 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                           RTpeakWidth = None, minApexBorderRatio = None, minIntensity = None, 
                           maxRTOffset = 5, maxMZOffset = 10,
                           
-                          maxPopulation = 5, intensityScales = 20, randomnessFactor = 0.1, 
-                          batchSize = None, rtSlices = None, mzSlices = None, instancePrefix = None,
-                          blockdim = (32, 8), griddim = (64, 4),
+                          maxPopulation = 5, intensityScales = 10, randomnessFactor = 0.1, 
+                          instancePrefix = None,
+                          blockdim = 32, griddim = 64,
                           verbose = True):
-    if batchSize is None:
-        batchSize = peakbot.Config.BATCHSIZE
-    if rtSlices is None:
-        rtSlices = peakbot.Config.RTSLICES
-    if mzSlices is None:
-        mzSlices = peakbot.Config.MZSLICES
+    batchSize = peakbot.Config.BATCHSIZE
+    rtSlices = peakbot.Config.RTSLICES
+    mzSlices = peakbot.Config.MZSLICES
     if instancePrefix is None:
         instancePrefix = peakbot.Config.INSTANCEPREFIX
     
@@ -54,7 +51,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         print("  | .. instance prefix: '%s'"%(instancePrefix))
         print("  |")
         
-    peakbot.cuda.initializeCUDAFunctions(rtSlices = rtSlices, mzSlices = mzSlices)
+    peakbot.cuda.initializeCUDAFunctions()
     cuda.synchronize()
     
     tic("sampleGeneratingTrainingDataset")
@@ -329,12 +326,21 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     ##
     ## Note: walls and backgrounds can be very large, rt center will be picked randomly
     ## Note: actual mz deviation of peaks will be randomized but is at least mzLowerBorder and mzUpperBorder
-    def _generateTestExamples(rng_states, mzs, ints, times, peaksCount, peaks, walls, backgrounds, instances, single, properties, areaRTs, areaMZs, peakTypes, centers, boxes, maxPopulation, maxInt, randomnessFactor):
+    def _generateTestExamples(rng_states, mzs, ints, times, peaksCount, peaks, walls, backgrounds, instances, single, properties, areaRTs, areaMZs, peakTypes, centers, boxes, maxPopulation, intensityScales, randomnessFactor):
         supports = cuda.local.array(shape = mzSlices, dtype=numba.float32)
         dsupports = cuda.local.array(shape = mzSlices, dtype=numba.float32)
         areaTimes = cuda.local.array(shape = rtSlices, dtype=numba.float32)
         dareaTimes = cuda.local.array(shape = rtSlices, dtype=numba.float32)
         temp = cuda.local.array(shape = (1, rtSlices, mzSlices), dtype=numba.float32)
+        
+        ## Classes of training instances
+        ## Main classes
+        rClass = cuda.local.array(shape = (7), dtype=numba.float32)
+        rClass[0] = 0; rClass[1] = 1; rClass[2] = 2; rClass[3] = 3;
+        rClass[4] = 4; rClass[5] = 1; rClass[6] = 1;
+        ## Distraction classes
+        dClass = cuda.local.array(shape = (4), dtype=numba.float32)
+        dClass[0] = 0; dClass[1] = 0; dClass[2] = 0; dClass[3] = 4;
         
         lInd = cuda.grid(1)
         lLen = cuda.gridsize(1)
@@ -345,30 +351,30 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         meanDifferenceScans = s / times.shape[0]
                 
         for instanceInd in range(lInd, instances.shape[0], lLen):
-            oRTShift = xoroshiro128p_uniform_float32(rng_states, lInd) * 2*rtSlices/16 - (rtSlices/16) 
-            oMZShift = xoroshiro128p_uniform_float32(rng_states, lInd) * 5 - 2.5
+            oRTShift = 0 #xoroshiro128p_uniform_float32(rng_states, lInd) * 2 * rtSlices/16 - (rtSlices/16) 
+            oMZShift = 0 #xoroshiro128p_uniform_float32(rng_states, lInd) * 5 - 2.5
             for populationInd in range(0, math.ceil(xoroshiro128p_uniform_float32(rng_states, lInd)*maxPopulation)):
                 ind        = -1
-                shiftRT    = 0
-                centerRT   = 0
-                centerMZ   = 0
-                mzLow      = 0
-                mzHigh     = 0
-                mpRT       = 0
-                mpMZ       = 0
-                mpRTLeft   = 0
-                mpRTRight  = 0 
-                mpMZLow    = 0
-                mpMZHigh   = 0
-                mpApexInt  = 0
-                typR = xoroshiro128p_uniform_float32(rng_states, lInd) * 5
-                typ = -1  #[isFullPeak, isPartPeak, hasCoelutingPeakLeft, hasCoelutingPeakRight, isBackground, isWall]
+                shiftRT    =  0
+                centerRT   =  0
+                centerMZ   =  0
+                mzLow      =  0
+                mzHigh     =  0
+                mpRT       =  0
+                mpMZ       =  0
+                mpRTLeft   =  0
+                mpRTRight  =  0 
+                mpMZLow    =  0
+                mpMZHigh   =  0
+                typR       = -1
+                typ        = -1  #[isFullPeak, hasCoelutingPeaksBothSides, hasCoelutingPeakLeft, hasCoelutingPeakRight, isBackground, isWall]
                 
                 ## main info in center of the area
                 if populationInd == 0:
+                    typR = rClass[int(math.floor(xoroshiro128p_uniform_float32(rng_states, lInd) * rClass.shape[0]))]
                     
                     ## Peak (change is higher since it is divided into four subgroups [single, left or right isomer, left and right isomer])              
-                    if typR <= 4:
+                    if typR <= 3 and peaks.shape[0] > 0:
                         typ       = 0
                         ind       = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(peaks.shape[0]-1))
                         centerRT  = peaks[ind, 0]
@@ -380,11 +386,11 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mpMZ      = peaks[ind, 1]
                         mpRTLeft  = peaks[ind, 2]
                         mpRTRight = peaks[ind, 3]
-                        mpMZLow   = mpMZ * (1 - peaks[ind, 4] / 2 / 1E6)
-                        mpMZHigh  = mpMZ * (1 + peaks[ind, 4] / 2 / 1E6)
+                        mpMZLow   = mpMZ * (1 - peaks[ind, 4] / 6 * 2 / 1E6)
+                        mpMZHigh  = mpMZ * (1 + peaks[ind, 4] / 6 * 2 / 1E6)
                     
                     ## Wall
-                    elif typR <= 5:
+                    elif typR == 4 and walls.shape[0] > 0:
                         typ       = 4
                         ind       = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(walls.shape[0]-1))
                         centerRT  = walls[ind, 1] + (walls[ind, 2]-walls[ind, 1]) * xoroshiro128p_uniform_float32(rng_states, lInd)
@@ -400,7 +406,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mpMZHigh  = mpMZ * (1 + walls[ind, 3] / 2 / 1E6)
                         
                     ## Background
-                    elif typR <= 6:
+                    elif typR == 5 and backgrounds.shape[0] > 0:
                         typ       = 5
                         ind       = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(backgrounds.shape[0]-1))
                         centerRT  = backgrounds[ind, 0]
@@ -414,23 +420,20 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mpRTRight = centerRT + 8 * meanDifferenceScans
                         mpMZLow   = mpMZ * (1 - backgrounds[ind, 2] / 2 / 1E6)
                         mpMZHigh  = mpMZ * (1 + backgrounds[ind, 2] / 2 / 1E6)
-                            
-                    #bestScanInd = peakbot.cuda.getBestMatch_kernel(times, centerRT + oRTShift)
-                    #if bestScanInd == -1:
-                    #    continue
-                    #bestMZInd = peakbot.cuda.getBestMatch_kernel(mzs[bestScanInd,0:peaksCount[bestScanInd]], centerMZ + oMZShift)
-                    #if bestMZInd == -1:
-                    #    continue
-                    #
-                    #mzLow     = mzs[bestScanInd, bestMZInd] * (1 - mzDevPPM * devMult / 2 / 1E6)
-                    #mzHigh    = mzs[bestScanInd, bestMZInd] * (1 + mzDevPPM * devMult / 2 / 1E6)
+                    
+                    ## unknown class
+                    else:
+                        raise RuntimeError("RuntimeError: unknonw class type in generateTestExamples")
+                    
                     mzLow     = mpMZ * (1 - mzDevPPM * devMult / 2 / 1E6) * (1 + oMZShift / 1E6)
                     mzHigh    = mpMZ * (1 + mzDevPPM * devMult / 2 / 1E6) * (1 + oMZShift / 1E6)
                 
                 ## distraction augmentation not in center of the area
                 if populationInd > 0:
+                    typR = dClass[int(math.floor(xoroshiro128p_uniform_float32(rng_states, lInd) * dClass.shape[0]))]
+                    
                     ## Peak
-                    if typR <= 4:
+                    if typR <= 3:
                         typ = 0
                         tries = 40
                         ok = False
@@ -459,7 +462,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             continue
                     
                     ## Wall
-                    elif typR <= 5:
+                    elif typR == 4:
                         tries = 40
                         ok = False
                         while tries > 0 and not ok:
@@ -475,14 +478,14 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             cmzDiff  = mpMZ - walls[sind, 0]
                             centerMZ = walls[sind, 0] + mzOffset
                             
-                            if (mzOffset > 0 and (walls[sind, 0] + mzOffset) * (1 - mzDevPPM / 2 / 1E6)+cmzDiff > mpMZHigh) or \
+                            if (mzOffset  > 0 and (walls[sind, 0] + mzOffset) * (1 - mzDevPPM / 2 / 1E6)+cmzDiff > mpMZHigh) or \
                                (mzOffset <= 0 and (walls[sind, 0] + mzOffset) * (1 + mzDevPPM / 2 / 1E6)+cmzDiff < mpMZLow):
                                 ok = True
                         if not ok:
                             continue                            
                         
                     ## Background
-                    elif typR <= 6:
+                    elif typR == 5:
                         tries = 40
                         ok = False
                         while tries > 0 and not ok:
@@ -506,6 +509,10 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                                 ok = True
                         if not ok:
                             continue
+                    
+                    ## unknown class
+                    else:
+                        raise RuntimeError("RuntimeError: unknonw class type in generateTestExamples")
                 
                 ## calculate supports for the addition and save them
                 for y in range(mzSlices):
@@ -513,21 +520,29 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                     areaMZs[instanceInd, y] = supports[y]
 
                 ## combine area with previous area
-                maxInt = peakbot.cuda._renovateArea_kernel(mzs, ints, times, peaksCount, centerRT + oRTShift, supports, temp, 0, areaTimes, (supports[1]-supports[0])*8)
+                peakbot.cuda._renovateArea_kernel(mzs, ints, times, peaksCount, centerRT + oRTShift, supports, temp, 0, areaTimes, (supports[1]-supports[0])*8)
+                
+                ## get center intensity
+                cIndRT = peakbot.cuda.getBestMatch_kernel(areaTimes, mpRT)
+                cIndMZ = peakbot.cuda.getBestMatch_kernel(supports , mpMZ)
+                maxInt = temp[0, cIndRT, cIndMZ]
                 
                 ## scale area
                 ## and save area times
-                r = 0.1 + 9.9 * xoroshiro128p_uniform_float32(rng_states, lInd)
-                maxInt = max(maxInt, 1)
-                mpApexInt = r
+                r = 1 + (intensityScales - 1) * xoroshiro128p_uniform_float32(rng_states, lInd)
+                if xoroshiro128p_uniform_float32(rng_states, lInd) < 0.5:
+                    r = 1/r
                 for x in range(rtSlices):
                     if populationInd == 0:
                         areaRTs[instanceInd, x] = areaTimes[x]
                     for y in range(mzSlices):
                         if temp[0,x,y] > 0:
-                            instances[instanceInd, x, y] = instances[instanceInd, x, y] + (temp[0,x,y] / maxInt * (1 + xoroshiro128p_uniform_float32(rng_states, lInd)*randomnessFactor) * r)
+                            a = instances[instanceInd, x, y] + (temp[0,x,y] / maxInt * (1 + xoroshiro128p_uniform_float32(rng_states, lInd)*randomnessFactor) * r)
+                            instances[instanceInd, x, y] = a 
+                            temp[0, x, y]
+                            
                 
-                if populationInd == 0 and typR < 4:
+                if populationInd == 0 and typR <= 3:
                     ta = peakbot.cuda.getBestMatch_kernel(areaTimes, mpRT)
                     tb = peakbot.cuda.getBestMatch_kernel(supports , mpMZ)
                     _getAsymmetricEllipse_kernel(single, instanceInd, 
@@ -539,11 +554,11 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                                                  peakbot.cuda.getBestMatch_kernel(supports , mpMZHigh) - tb)
                 
                 ## Add isomeric compounds if the center peak is a chromatographic peak
-                if populationInd == 0 and typR <= 4:                    
-                    minIOU, maxIOU, remain = 0.15, 0.33, 0.5
+                if populationInd == 0 and typR <= 3:
+                    minIOU, maxIOU, remain = 0.00, 0.33, 0.50
                     
                     ## add isomeric peak on the left side
-                    if 1 < typR <= 2 or 2 < typR <= 3:
+                    if typR == 1 or typR == 2:
                         tries = 40
                         ok    = False
                         while tries > 0 and not ok:
@@ -563,23 +578,30 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                                                 peaks[ind,2], peaks[ind,3], 0, 1) >= remain and \
                                 _rightNot_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1, 
                                                  peaks[ind,2], peaks[ind,3], 0, 1) >= remain:
-                                ok = True
+                                
+                                    ## calculate supports for the addition
+                                    for t in range(mzSlices):
+                                        dsupports[t] = 0
+                                        dsupports[t] = mzLow + (mzHigh-mzLow)*(t/(mzSlices-1))*(1+oMZShift/1E6)
+                                    peakbot.cuda._renovateArea_kernel(mzs, ints, times, peaksCount, peaks[sind, 0] + rtOffset + oRTShift, dsupports, temp, 0, dareaTimes, (supports[1]-supports[0])*8)
+
+                                    ## get center intensity
+                                    cIndRT = peakbot.cuda.getBestMatch_kernel(dareaTimes, peaks[sind, 0] + rtOffset + oRTShift)
+                                    cIndMZ = peakbot.cuda.getBestMatch_kernel(dsupports , (mzHigh+mzLow)/2)
+                                    maxInt = temp[0, cIndRT, cIndMZ]
+
+                                    ok = maxInt > 0
                         
                         if ok:
-                            ## calculate supports for the addition
-                            for t in range(mzSlices):
-                                dsupports[t] = 0
-                                dsupports[t] = mzLow + (mzHigh-mzLow)*(t/(mzSlices-1))*(1+oMZShift/1E6)
-                            maxInt = peakbot.cuda._renovateArea_kernel(mzs, ints, times, peaksCount, peaks[sind, 0] + rtOffset + oRTShift, dsupports, temp, 0, dareaTimes, (supports[1]-supports[0])*8)
-
                             ## scale area
-                            ## and save area times
-                            r = maxInt * (0.1 + 9.9*xoroshiro128p_uniform_float32(rng_states, lInd))
+                            r = 1 + (intensityScales - 1) * xoroshiro128p_uniform_float32(rng_states, lInd)
+                            if xoroshiro128p_uniform_float32(rng_states, lInd) < 0.5:
+                                r = 1/r
                             for x in range(rtSlices):
                                 for y in range(mzSlices):
                                     if temp[0,x,y] > 0:
                                         instances[instanceInd, x, y] = instances[instanceInd, x, y] + (temp[0,x,y] / maxInt * (1 + xoroshiro128p_uniform_float32(rng_states, lInd)*randomnessFactor) * r)
-                            
+                        
                             total = -1
                             newInd = -1
                             for x in range(rtSlices):
@@ -592,15 +614,14 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                                     if total == -1 or s < total:
                                         total = s
                                         newInd = x
-                            
-                            if newInd >= 0 and areaTimes[newInd] > mpRTLeft:
+                        
+                            if newInd >= 0 and areaTimes[newInd] > mpRTLeft:                            
+                                ## update left border and make typ if a leftPeak (or both)
                                 mpRTLeft = areaTimes[newInd]
-                            
-                                ## make if a leftPeak
                                 typ = 2
                     
                     ## add isomeric peak on the right side
-                    if 1 < typR <= 2 or 3 < typR <= 4:
+                    if typR == 1 or typR == 3:
                         tries = 40
                         ok    = False
                         while tries > 0 and not ok:
@@ -620,18 +641,24 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                                                  peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) >= remain and \
                                 _leftNot_kernel(peaks[ind,2], peaks[ind,3], 0, 1, 
                                                 peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) >= remain:
-                                ok = True
                         
+                                    ## calculate supports for the addition
+                                    for t in range(mzSlices):
+                                        dsupports[t] = 0
+                                        dsupports[t] = mzLow + (mzHigh-mzLow)*(t/(mzSlices-1))*(1+oMZShift/1E6)
+                                    peakbot.cuda._renovateArea_kernel(mzs, ints, times, peaksCount, peaks[sind, 0] - rtOffset + oRTShift, dsupports, temp, 0, dareaTimes, (supports[1]-supports[0])*8)
+
+                                    ## get center intensity
+                                    cIndRT = peakbot.cuda.getBestMatch_kernel(dareaTimes, peaks[sind, 0] - rtOffset + oRTShift)
+                                    cIndMZ = peakbot.cuda.getBestMatch_kernel(dsupports , (mzHigh+mzLow)/2)
+                                    maxInt = temp[0, cIndRT, cIndMZ]
+                                    
+                                    ok = maxInt > 0
                         if ok:
-                            ## calculate supports for the addition
-                            for t in range(mzSlices):
-                                dsupports[t] = 0
-                                dsupports[t] = mzLow + (mzHigh-mzLow)*(t/(mzSlices-1))*(1+oMZShift/1E6)
-                            maxInt = peakbot.cuda._renovateArea_kernel(mzs, ints, times, peaksCount, peaks[sind, 0] - rtOffset + oRTShift, dsupports, temp, 0, dareaTimes, (supports[1]-supports[0])*8)
-                            
                             ## scale area
-                            ## and save area times
-                            r = maxInt * (0.1 + 9.9*xoroshiro128p_uniform_float32(rng_states, lInd))
+                            r = 1 + (intensityScales - 1) * xoroshiro128p_uniform_float32(rng_states, lInd)
+                            if xoroshiro128p_uniform_float32(rng_states, lInd) < 0.5:
+                                r = 1/r
                             for x in range(rtSlices):
                                 for y in range(mzSlices):
                                     if temp[0,x,y] > 0:
@@ -651,6 +678,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                                         newInd = x
                             
                             if newInd >= 0 and areaTimes[newInd] < mpRTRight:
+                                ## update right border and make type a right peak (or both)
                                 mpRTRight = areaTimes[newInd]
                             
                                 ## if there is a left isomer make it a partPeak
@@ -697,11 +725,10 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
             if mVal > 0:
                 for x in range(rtSlices):
                      for y in range(mzSlices):
-                        instances[instanceInd, x, y] /= mVal
+                        instances[instanceInd, x, y] = instances[instanceInd, x, y] / mVal
     generateTestExamples = cuda.jit()(_generateTestExamples)
     
-    
-    rng_states = create_xoroshiro128p_states(griddim[0] * griddim[1] * blockdim[0] * blockdim[1], seed=1)
+    rng_states = create_xoroshiro128p_states(griddim* blockdim, seed=2021)
     cuda.synchronize()
     
     
@@ -718,7 +745,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     d_walls       = cuda.to_device(walls)
     d_backgrounds = cuda.to_device(backgrounds)
     
-    genSamples = blockdim[0] * blockdim[1] * griddim[0] * griddim[1]
+    genSamples = blockdim * griddim
     
     ## local instances
     instances   = np.zeros((genSamples, rtSlices, mzSlices), np.float32)
@@ -743,7 +770,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     
     if verbose: 
         print("  | Generating %d examples in %d batches on the GPU"%(nTestExamples, math.ceil(nTestExamples/batchSize)))
-        print("  | .. with the current values of blockdim (%d,%d) and griddim (%d,%d) %d samples will be generated on the GPU"%(blockdim[0], blockdim[1], griddim[0], griddim[1], genSamples))
+        print("  | .. with the current values of blockdim (%d) and griddim (%d) %d samples will be generated on the GPU"%(blockdim, griddim, genSamples))
         print("  | .. size of the necessary objects is %5.1f Mb (and some more local memory is required by the kernels)"%((instances.nbytes+single.nbytes+areaRTs.nbytes+areaMZs.nbytes+peakTypes.nbytes+centers.nbytes+boxes.nbytes+properties.nbytes)/1E6))
         print("  | .. some more instances than specified by the parameters will be generated. Rounding (ceiling) causes this.")
         print("  | ")
@@ -756,8 +783,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         print("\r  | .. %6d instance batches already existed. The new ones are appended starting with id %s                           "%(skipped, skipped))
 
     genClasses = [0,0,0,0,0,0]
-    with tqdm.tqdm(total = nTestExamples, desc="  | .. current", unit="instances", disable=not verbose) as pbar:
+    with tqdm.tqdm(total = nTestExamples, desc="  | .. current", unit="instances", miniters=1, disable=not verbose) as pbar:
         ## generate ahead to support overlapping kernel execution and pickle file dumping
+        resetVars[griddim, blockdim](d_instances, d_single, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, d_properties)
         generateTestExamples[griddim, blockdim](rng_states, d_mzs, d_ints, d_times, d_peaksCount, d_peaks, d_walls, d_backgrounds, d_instances, d_single, d_properties, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, maxPopulation, intensityScales, randomnessFactor)
         genTestExamples = 0
         
@@ -770,23 +798,36 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
             properties = d_properties.copy_to_host();
             
             resetVars[griddim, blockdim](d_instances, d_single, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, d_properties)
-            description = ["" for i in range(batchSize)]
             generateTestExamples[griddim, blockdim](rng_states, d_mzs, d_ints, d_times, d_peaksCount, d_peaks, d_walls, d_backgrounds, d_instances, d_single, d_properties, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, maxPopulation, intensityScales, randomnessFactor)
+                        
+            use = np.logical_and(np.sum(peakTypes, (1)) == 1, np.amax(instances, (1,2)) == 1)
+            instances = instances[use,:,:]
+            single = single[use, :, :]
+            areaRTs = areaRTs[use, :]
+            areaMZs = areaMZs[use, :]
+            peakTypes = peakTypes[use, :]
+            centers = centers[use, :]
+            boxes = boxes[use, :]
+            properties = properties[use, :, :]
             
-            genClasses = [genClasses[0] + sum(peakTypes[:,0]==1), genClasses[1] + sum(peakTypes[:,1]==1), genClasses[2] + sum(peakTypes[:,2]==1),
-                          genClasses[3] + sum(peakTypes[:,3]==1), genClasses[4] + sum(peakTypes[:,4]==1), genClasses[5] + sum(peakTypes[:,5]==1)]
+            assert all(np.amax(instances, (1,2)) <= 1), "LCHRMSarea is not scaled to a maximum of 1 '%s'"%(str(np.amax(instances, (1,2))))
             
             cStart = 0
             while cStart < instances.shape[0] and cStart+batchSize < instances.shape[0]:
-                toDump = {"LCHRMSArea"      : instances[cStart:(cStart+batchSize)], 
-                          "areaRTs"         : areaRTs[cStart:(cStart+batchSize)], 
-                          "areaMZs"         : areaMZs[cStart:(cStart+batchSize)], 
-                          "peakType"        : peakTypes[cStart:(cStart+batchSize)], 
-                          "center"          : centers[cStart:(cStart+batchSize)], 
-                          "box"             : boxes[cStart:(cStart+batchSize)], 
-                          "single"          : single[cStart:(cStart+batchSize)],
-                          "chromatogramFile": fileIdentifier[cStart:(cStart+batchSize)]}
+                a = cStart
+                b = cStart + batchSize
+                toDump = {"LCHRMSArea"      : instances[a:b,:,:], 
+                          "single"          : single   [a:b,:,:],
+                          "areaRTs"         : areaRTs  [a:b,:], 
+                          "areaMZs"         : areaMZs  [a:b,:], 
+                          "peakType"        : peakTypes[a:b,:], 
+                          "center"          : centers  [a:b,:], 
+                          "box"             : boxes    [a:b,:], 
+                          "chromatogramFile": [fileIdentifier for i in range(a,b)]}
                 pickle.dump(toDump, open(os.path.join(exportPath, "%s%d.pickle"%(instancePrefix, outVal)), "wb"))
+                
+                genClasses = [genClasses[0] + sum(peakTypes[a:b,0]==1), genClasses[1] + sum(peakTypes[a:b,1]==1), genClasses[2] + sum(peakTypes[a:b,2]==1),
+                              genClasses[3] + sum(peakTypes[a:b,3]==1), genClasses[4] + sum(peakTypes[a:b,4]==1), genClasses[5] + sum(peakTypes[a:b,5]==1)]
                 cStart += batchSize
                 outVal += 1
                 genTestExamples += batchSize
@@ -801,21 +842,21 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     cuda.defer_cleanup()
     
     if verbose:
-        print("  | .. generated %d training instances"%sum(genClasses))
-        print("  |    .. %7d (%4.1f%%) single peaks"                        %(genClasses[0], 100*genClasses[0]/sum(genClasses)))
-        print("  |    .. %7d (%4.1f%%) peaks with earlier and later isomers"%(genClasses[1], 100*genClasses[1]/sum(genClasses)))
-        print("  |    .. %7d (%4.1f%%) peaks with earlier isomers"          %(genClasses[2], 100*genClasses[2]/sum(genClasses)))
-        print("  |    .. %7d (%4.1f%%) peaks with later isomers"            %(genClasses[3], 100*genClasses[3]/sum(genClasses)))
-        print("  |    .. %7d (%4.1f%%) walls"                               %(genClasses[4], 100*genClasses[4]/sum(genClasses)))
-        print("  |    .. %7d (%4.1f%%) backgrounds"                         %(genClasses[5], 100*genClasses[5]/sum(genClasses)))
+        print("  | .. generated %d training instances (%d are valid)"%(genTestExamples, sum(genClasses)))
+        print("  |    .. %7d (%4.1f%%) single peaks"                        %(genClasses[0], 100*genClasses[0]/genTestExamples))
+        print("  |    .. %7d (%4.1f%%) peaks with earlier and later isomers"%(genClasses[1], 100*genClasses[1]/genTestExamples))
+        print("  |    .. %7d (%4.1f%%) peaks with earlier isomers"          %(genClasses[2], 100*genClasses[2]/genTestExamples))
+        print("  |    .. %7d (%4.1f%%) peaks with later isomers"            %(genClasses[3], 100*genClasses[3]/genTestExamples))
+        print("  |    .. %7d (%4.1f%%) walls"                               %(genClasses[4], 100*genClasses[4]/genTestExamples))
+        print("  |    .. %7d (%4.1f%%) backgrounds"                         %(genClasses[5], 100*genClasses[5]/genTestExamples))
         print("  | .. took %.1f seconds"%(toc("sampleGeneratingTrainingDataset")))
         print("")
-    TabLog().addData(fileIdentifier, "single peaks", "%d (%.1f%%)"%(genClasses[0], 100*genClasses[0]/sum(genClasses)))
-    TabLog().addData(fileIdentifier, "LeRi isomer" , "%d (%.1f%%)"%(genClasses[1], 100*genClasses[1]/sum(genClasses)))
-    TabLog().addData(fileIdentifier, "Le isomer"   , "%d (%.1f%%)"%(genClasses[2], 100*genClasses[2]/sum(genClasses)))
-    TabLog().addData(fileIdentifier, "Ri isomer"   , "%d (%.1f%%)"%(genClasses[3], 100*genClasses[3]/sum(genClasses)))
-    TabLog().addData(fileIdentifier, "walls"       , "%d (%.1f%%)"%(genClasses[4], 100*genClasses[4]/sum(genClasses)))
-    TabLog().addData(fileIdentifier, "backgrounds" , "%d (%.1f%%)"%(genClasses[5], 100*genClasses[5]/sum(genClasses)))
+    TabLog().addData(fileIdentifier, "single peaks ", "%d (%.1f%%)"%(genClasses[0], 100*genClasses[0]/genTestExamples))
+    TabLog().addData(fileIdentifier, "LeRi iso"     , "%d (%.1f%%)"%(genClasses[1], 100*genClasses[1]/genTestExamples))
+    TabLog().addData(fileIdentifier, "Le  iso "     , "%d (%.1f%%)"%(genClasses[2], 100*genClasses[2]/genTestExamples))
+    TabLog().addData(fileIdentifier, "Ri iso"       , "%d (%.1f%%)"%(genClasses[3], 100*genClasses[3]/genTestExamples))
+    TabLog().addData(fileIdentifier, "walls"        , "%d (%.1f%%)"%(genClasses[4], 100*genClasses[4]/genTestExamples))
+    TabLog().addData(fileIdentifier, "backgrounds"  , "%d (%.1f%%)"%(genClasses[5], 100*genClasses[5]/genTestExamples))
     TabLog().addData(fileIdentifier, "Training examples (sec)", toc("sampleGeneratingTrainingDataset"))
         
         

@@ -1,3 +1,4 @@
+import logging
 
 from .core import tic, toc, tocP, tocAddStat, addFunctionRuntime, timeit, printRunTimesSummary
 
@@ -25,7 +26,7 @@ class Config(object):
     """Base configuration class"""
 
     NAME    = "PeakBot"
-    VERSION = "4.6"
+    VERSION = "0.9"
     
     RTSLICES       =  32   ## should be of 2^n
     MZSLICES       = 128   ## should be of 2^m    
@@ -96,7 +97,6 @@ except:
 
 try:
     from psutil import virtual_memory
-
     mem = virtual_memory()
     print("  | .. Main memory: %.1f GB"%(mem.total/1000/1000/1000))
 except:
@@ -110,8 +110,6 @@ try:
     for gpu in gpus:
         print("  | .. TensorFlow device: Name '%s', type '%s'"%(gpu.name, gpu.device_type))
 except:
-    import traceback
-    traceback.print_exc()
     print("  | .. fetching GPU info failed")
 
 
@@ -148,14 +146,14 @@ def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
     while l is not None:
         
         if verbose and ite == 0:
-            print("  | Generated data is")
+            logging.info("  | Generated data is")
 
             for k, v in l.items():
                 if type(v).__module__ == "numpy":
-                    print("  | .. gt: %18s numpy: %30s %10s"%(k, v.shape, v.dtype))
+                    logging.info("  | .. gt: %18s numpy: %30s %10s"%(k, v.shape, v.dtype))
                 else:
-                    print("  | .. gt: %18s  type:  %40s"%(k, type(v)))
-            print("  |")
+                    logging.info("  | .. gt: %18s  type:  %40s"%(k, type(v)))
+            logging.info("  |")
         
         if newBatchSize is not None:
             
@@ -361,7 +359,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                                               steps=self.steps)
                 
                 self.maxLenNames = max(self.maxLenNames, len(validation_set_name))
-                print("   %%%ds: "%self.maxLenNames%validation_set_name, end="")
+                if self.verbose: print("   %%%ds: "%self.maxLenNames%validation_set_name, end="")
                 
                 file_writer = tf.summary.create_file_writer(self.logDir + "/" + validation_set_name)
                 for i, (metric, result) in enumerate(zip(self.model.metrics_names, results)):
@@ -375,7 +373,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                     self.printWidths[i] = max(self.printWidths[i], len(valuename))
                     if self.verbose: print("%s: %.4f"%("%%%ds"%self.printWidths[i]%valuename, result), end="")
                     hist[validation_set_name + "_" + valuename] = result
-                print("")
+                if self.verbose: print("")
             if self.verbose: print("")
         self.history.append(hist)
                 
@@ -383,19 +381,14 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
         self.on_epoch_end(self.lastEpochNum, logs=logs, ignoreEpoch = True)
     
 class PeakBot():
-    def __init__(self, name, batchSize = None, rts = None, mzs = None, numClasses = None, version = None):
+    def __init__(self, name, ):
         super(PeakBot, self).__init__()
         
-        if batchSize is None:
-            batchSize = Config.BATCHSIZE
-        if rts is None:
-            rts = Config.RTS
-        if mzs is None:
-            mzs = Config.MZS
-        if numClasses is None:
-            numClasses = Config.NUMCLASSES
-        if version is None:
-            version = Config.VERSION
+        batchSize = Config.BATCHSIZE
+        rts = Config.RTSLICES
+        mzs = Config.MZSLICES
+        numClasses = Config.NUMCLASSES
+        version = Config.VERSION
             
         self.name       = name
         self.batchSize  = batchSize
@@ -407,11 +400,9 @@ class PeakBot():
             
     
     @timeit
-    def buildTFModel(self, verbose = False, dropOutRate = None, uNetLayerSizes = None):
-        if dropOutRate is None:
-            dropOutRate = Config.DROPOUT
-        if uNetLayerSizes is None:
-            uNetLayerSizes = Config.UNETLAYERSIZES
+    def buildTFModel(self, verbose = False):
+        dropOutRate = Config.DROPOUT
+        uNetLayerSizes = Config.UNETLAYERSIZES
         
         if verbose: 
             print("  | PeakBot v %s model"%(self.version))
@@ -452,6 +443,13 @@ class PeakBot():
         peakType    = tf.keras.layers.Dense(self.numClasses, name="peakType", activation="sigmoid")(fx)
         center      = tf.keras.layers.Dense(              2, name="center"  , activation="relu"   )(fx)
         box         = tf.keras.layers.Dense(              4, name="box"     , activation="relu"   )(fx)
+        
+        #tf.math.argmax(peakType, axis=1)
+        #b_broadcast = tf.zeros(tf.shape(center), dtype=center.dtype)
+        #center = tf.where(tf.greater(center, 3), b_broadcast, center)
+        #b_broadcast = tf.zeros(tf.shape(box), dtype=box.dtype)
+        #box = tf.where(tf.greater(box, 3), b_broadcast, box, name="box")
+        
       
         ### Decoder
         #for i in range(len(uNetLayerSizes)-1, -1, -1):
@@ -492,7 +490,9 @@ class PeakBot():
         self.model = tf.keras.models.Model(input_, [peakType, center, box]) #, single])
     
     @timeit
-    def compileModel(self, learningRate = Config.LEARNINGRATESTART):
+    def compileModel(self, learningRate = None):
+        if learningRate is None:
+            learningRate = Config.LEARNINGRATESTART
         cce = tf.keras.losses.CategoricalCrossentropy()
         self.model.compile(
             optimizer = tf.keras.optimizers.Adam(learning_rate=learningRate),
@@ -516,11 +516,9 @@ class PeakBot():
         )
     
     @timeit
-    def train(self, datTrain, datVal, epochs = None, steps_per_epoch = None, logDir = None, callbacks = None, verbose = 1):
-        if epochs is None: 
-            epochs = Config.EPOCHS
-        if steps_per_epoch is None:
-            steps_per_epoch = Config.STEPSPEREPOCH
+    def train(self, datTrain, datVal, logDir = None, callbacks = None, verbose = 1):
+        epochs = Config.EPOCHS
+        steps_per_epoch = Config.STEPSPEREPOCH
         
         if verbose: 
             print("  | Fitting model on training data")
@@ -635,17 +633,14 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
             print("  |")
         
     ## instanciate a new model and set its parameters
-    pb = PeakBot(modelName, batchSize = Config.BATCHSIZE, rts = Config.RTSLICES, mzs = Config.MZSLICES)
-    pb.buildTFModel(dropOutRate = Config.DROPOUT, uNetLayerSizes=Config.UNETLAYERSIZES, verbose = verbose)
+    pb = PeakBot(modelName)
+    pb.buildTFModel(verbose = verbose)
     pb.compileModel(learningRate = Config.LEARNINGRATESTART)
     
     ## train the model
     history = pb.train(
         datTrain = datGenTrain, 
         datVal   = datGenVal, 
-
-        epochs          = Config.EPOCHS,
-        steps_per_epoch = Config.STEPSPEREPOCH,
 
         logDir = logDir, 
         callbacks = [logger, lrScheduler, valDS],
@@ -707,60 +702,67 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
                                                                     "negative_predictive_value": negative_predictive_value, 
                                                                     "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR})
     
-    for fi in tqdm.tqdm(os.listdir(pathFrom), desc="  | .. detecting chromatographic peaks", disable=not verbose):
-        l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
-        print(l.keys())
-        lcmsArea = l["LCHRMSArea"]
-        for j in range(lcmsArea.shape[0]):
-            m = np.max(lcmsArea[j,:,:])
-            if m > 0:
-                lcmsArea[j,:,:] = lcmsArea[j,:,:] / m
+    allFiles = os.listdir(pathFrom)
+    l = pickle.load(open(os.path.join(pathFrom, allFiles[0]), "rb"))
+    
+    with tqdm.tqdm(total = l["LCHRMSArea"].shape[0] * len(allFiles), desc="  | .. detecting chromatographic peaks", unit="instances", disable=not verbose) as pbar:
+    
+        for fi in os.listdir(pathFrom):
+            l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
 
-        pred = model.predict(lcmsArea)
-        peaksDone += lcmsArea.shape[0]
+            lcmsArea = l["LCHRMSArea"]
+            for j in range(lcmsArea.shape[0]):
+                m = np.max(lcmsArea[j,:,:])
+                if m > 0:
+                    lcmsArea[j,:,:] = lcmsArea[j,:,:] / m
 
-        for j in range(lcmsArea.shape[0]):
-            ptyp = np.argmax(np.array(pred[0][j,:]))
-            prtInd, pmzInd = [round(i) for i in pred[1][j,:]]
-            prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]
+            pred = model.predict(lcmsArea)
+            peaksDone += lcmsArea.shape[0]
 
-            if ptyp == 0 or ptyp == 1 or ptyp == 2 or ptyp == 3:
-                try:                      
-                    prt, pmz = -1, -1
-                    if 0 <= prtInd < l["areaRTs"].shape[1]:
-                        prt = l["areaRTs"][j,prtInd]
-                    pmz = -1
-                    if 0 <= pmzInd < l["areaMZs"].shape[1]:
-                        pmz = l["areaMZs"][j,pmzInd]
-                        
-                    prtstart, prtend, pmzstart, pmzend = -1, -1, -1, -1
-                    if 0 <= prtstartInd < l["areaRTs"].shape[1]:
-                        prtstart = l["areaRTs"][j,prtstartInd]
-                    if 0 <= prtendInd < l["areaRTs"].shape[1]:
-                        prtend = l["areaRTs"][j, prtendInd]
-                    if 0 <= pmzstartInd < l["areaMZs"].shape[1]:
-                        pmzstart = l["areaMZs"][j, pmzstartInd]
-                    if 0 <= pmzendInd < l["areaMZs"].shape[1]:
-                        pmzend = l["areaMZs"][j, pmzendInd]
-                        
-                    if "gdProps" in l.keys():
-                        gdrt, gdmz, gdrtStartInd, gdrtEndInd, gdmzStartInd, gdmzEndInd = [i for i in l["gdProps"][j,:]]
+            for j in range(lcmsArea.shape[0]):
+                ptyp = np.argmax(np.array(pred[0][j,:]))
+                prtInd, pmzInd = [round(i) for i in pred[1][j,:]]
+                prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]
 
-                        prt = gdrt
-                        pmz = gdmz
+                if ptyp == 0 or ptyp == 1 or ptyp == 2 or ptyp == 3:
+                    try:                      
+                        prt, pmz = -1, -1
+                        if 0 <= prtInd < l["areaRTs"].shape[1]:
+                            prt = l["areaRTs"][j,prtInd]
+                        pmz = -1
+                        if 0 <= pmzInd < l["areaMZs"].shape[1]:
+                            pmz = l["areaMZs"][j,pmzInd]
 
-                    if prt!=-1 and pmz!=-1 and prtstart!=-1 and prtend!=-1 and pmzstart!=-1 and pmzend!=-1:
-                        peaks.append([prt, pmz, prtstart, prtend, pmzstart, pmzend])
-                    
-                except:
+                        prtstart, prtend, pmzstart, pmzend = -1, -1, -1, -1
+                        if 0 <= prtstartInd < l["areaRTs"].shape[1]:
+                            prtstart = l["areaRTs"][j,prtstartInd]
+                        if 0 <= prtendInd < l["areaRTs"].shape[1]:
+                            prtend = l["areaRTs"][j, prtendInd]
+                        if 0 <= pmzstartInd < l["areaMZs"].shape[1]:
+                            pmzstart = l["areaMZs"][j, pmzstartInd]
+                        if 0 <= pmzendInd < l["areaMZs"].shape[1]:
+                            pmzend = l["areaMZs"][j, pmzendInd]
+
+                        if "gdProps" in l.keys():
+                            gdrt, gdmz, gdrtStartInd, gdrtEndInd, gdmzStartInd, gdmzEndInd = [i for i in l["gdProps"][j,:]]
+
+                            prt = gdrt
+                            pmz = gdmz
+
+                        if prt!=-1 and pmz!=-1 and prtstart!=-1 and prtend!=-1 and pmzstart!=-1 and pmzend!=-1:
+                            peaks.append([prt, pmz, prtstart, prtend, pmzstart, pmzend, 0, 1])
+
+                    except:
+                        errors += 1
+
+                elif ptyp == 4:
+                    walls += 1
+                elif ptyp == 5:
+                    backgrounds += 1
+                else: 
                     errors += 1
-            
-            elif ptyp == 4:
-                walls += 1
-            elif ptyp == 5:
-                backgrounds += 1
-            else: 
-                errors += 1
+        
+        pbar.update(l["LCHRMSArea"].shape[0])
 
     if verbose:
         print("  | .. %d local maxima analyzed"%(peaksDone))
@@ -785,7 +787,7 @@ def exportPeakBotResultsFeatureML(peaks, fileTo):
         fout.write('    <featureList count="%d">\n'%len(peaks))
 
         for j, p in enumerate(peaks):
-            rt, mz, inte, rtstart, rtend, mzstart, mzend = p[0], p[1], 0, p[2], p[3], p[4], p[5]
+            rt, mz, rtstart, rtend, mzstart, mzend, inte = p[0], p[1], p[2], p[3], p[4], p[5], p[6]
             fout.write('<feature id="%s">\n'%j)
             fout.write('  <position dim="0">%f</position>\n'%rt)
             fout.write('  <position dim="1">%f</position>\n'%mz)
@@ -793,7 +795,7 @@ def exportPeakBotResultsFeatureML(peaks, fileTo):
             fout.write('  <quality dim="0">0</quality>\n')
             fout.write('  <quality dim="1">0</quality>\n')
             fout.write('  <overallquality>0</overallquality>\n')
-            fout.write('  <charge>1</charge>\n')
+            #fout.write('  <charge>1</charge>\n')
             fout.write('  <convexhull nr="0">\n')
             fout.write('    <pt x="%f" y="%f" />\n'%(rtstart , mzstart))
             fout.write('    <pt x="%f" y="%f" />\n'%(rtstart , mzend  ))
@@ -808,12 +810,12 @@ def exportPeakBotResultsFeatureML(peaks, fileTo):
 @timeit
 def exportPeakBotResultsTSV(peaks, toFile):
     with open(toFile, "w") as fout:
-        fout.write("\t".join(["Num", "RT", "MZ", "RtStart", "RtEnd", "MzStart", "MzEnd"]))
+        fout.write("\t".join(["Num", "RT", "MZ", "RtStart", "RtEnd", "MzStart", "MzEnd", "PeakArea"]))
         fout.write("\n")
 
         for j, p in enumerate(peaks):
-            rt, mz, inte, rtstart, rtend, mzstart, mzend = p[0], p[1], 0, p[2], p[3], p[4], p[5]
-            fout.write("\t".join((str(s) for s in [j, rt, mz, rtstart, rtend, mzstart, mzend])))
+            rt, mz, rtstart, rtend, mzstart, mzend, inte = p[0], p[1], p[2], p[3], p[4], p[5], p[6]
+            fout.write("\t".join((str(s) for s in [j, rt, mz, rtstart, rtend, mzstart, mzend, inte])))
             fout.write("\n")
 
 @timeit
@@ -1053,10 +1055,10 @@ def exportLocalMaximaAsFeatureML(foutFile, peaks):
             fout.write('  <overallquality>0</overallquality>\n')
             fout.write('  <charge>1</charge>\n')
             fout.write('  <convexhull nr="0">\n')
-            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,8] , peaks[j, 3]*(1.-peaks[j,5]/2/1.E6)))
-            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,8] , peaks[j, 3]*(1.+peaks[j,5]/2/1.E6)))
-            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,11], peaks[j, 3]*(1.+peaks[j,5]/2/1.E6)))
-            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,11], peaks[j, 3]*(1.-peaks[j,5]/2/1.E6)))
+            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,8] , peaks[j, 3]*(1.-peaks[j,5]/6/1.E6)))
+            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,8] , peaks[j, 3]*(1.+peaks[j,5]/6/1.E6)))
+            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,11], peaks[j, 3]*(1.+peaks[j,5]/6/1.E6)))
+            fout.write('    <pt x="%f" y="%f" />\n'%(peaks[j,11], peaks[j, 3]*(1.-peaks[j,5]/6/1.E6)))
             fout.write('  </convexhull>\n')
             fout.write('</feature>\n')
 
@@ -1069,7 +1071,7 @@ def exportLocalMaximaAsTSV(foutFile, peaks):
         fout.write("\n")
 
         for j in range(peaks.shape[0]):
-            fout.write("\t".join((str(s) for s in [j, peaks[j,2], peaks[j,3], peaks[j,8], peaks[j,11], peaks[j, 3]*(1.-peaks[j,5]/2/1.E6), peaks[j, 3]*(1.+peaks[j,5]/2/1.E6)])))
+            fout.write("\t".join((str(s) for s in [j, peaks[j,2], peaks[j,3], peaks[j,8], peaks[j,11], peaks[j, 3]*(1.-peaks[j,5]/6/1.E6), peaks[j, 3]*(1.+peaks[j,5]/6/1.E6)])))
             fout.write("\n")
 def showSummaryPlots(peaks, maximaProps, maximaPropsAll, polarity, highlights = None):
     tic()
