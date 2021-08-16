@@ -20,8 +20,8 @@ class Chromatogram():
         self.MS1_list = []
         self.MS2_list = []
         self.msInstruments = {}
-        
-    
+
+
     def convertChromatogramToNumpyObjects(self, verbose=True, verbosePrefix=""):
         peaksTotal = 0
         maxPeaksPerScan = 0
@@ -49,10 +49,10 @@ class Chromatogram():
         t[t<=0] = 1E8
         minMZ = np.min(t)
         maxMZ = np.max(t)
-        
+
         s = np.diff(times)
-        
-        
+
+
 
         if verbose:
             print(verbosePrefix, "  | .. there are %d scans in the file"%(len(self.MS1_list)), sep="")
@@ -65,33 +65,33 @@ class Chromatogram():
             print(verbosePrefix, "  | .. generating two numpy arrays with %d x %d elements"%(mzs.shape[0], ints.shape[1]), sep="")
 
         return mzs, ints, times, peaksCount
-        
+
     def keepOnlyFilterLine(self, filterLineToKeep):
         temp = []
         for scan in self.MS1_list:
             if scan.filter_line == filterLineToKeep:
                 temp.append(scan)
         self.MS1_list = temp
-        
+
         temp = []
         for scan in self.MS2_list:
             if scan.filter_line == filterLineToKeep:
                 temp.append(scan)
         self.MS2_list = temp
-        
+
     def removeNoise(self, noiseCutoff=0):
         for scan in self.MS1_list:
             temp = np.argwhere(scan.intensity_list >= noiseCutoff)
             scan.mz_list = scan.mz_list[temp][:,0]
             scan.intensity_list = scan.intensity_list[temp][:,0]
             scan.peak_count = len(temp)
-        
+
         for scan in self.MS2_list:
             temp = np.argwhere(scan.intensity_list >= noiseCutoff)
             scan.mz_list = scan.mz_list[temp][:,0]
             scan.intensity_list = scan.intensity_list[temp][:,0]
             scan.peak_count = len(temp)
-        
+
     def removeBounds(self, minRT=0, maxRT=1E6, minMZ=0, maxMZ=1E6):
         use = []
         for scan in self.MS1_list:
@@ -103,7 +103,7 @@ class Chromatogram():
                 if scan.peak_count > 0:
                     use.append(scan)
         self.MS1_list = use
-        
+
         use = []
         for scan in self.MS2_list:
             if minRT < scan.retention_time < maxRT:
@@ -114,7 +114,7 @@ class Chromatogram():
                 if scan.peak_count > 0:
                     use.append(scan)
         self.MS2_list = use
-        
+
 
     def getMS1ScanCount(self):
         return len(self.MS1_list)
@@ -221,11 +221,11 @@ class Chromatogram():
         return polarities
 
     def getTIC(self, filterLine="", useMS2=False):
-        
+
         msLevelList=self.MS1_list
         if useMS2:
             msLevelList=self.MS2_list
-            
+
         TIC     = [0 for i in range(len(self.MS2_list))]
         times   = [0 for i in range(len(self.MS2_list))]
         scanIds = [0 for i in range(len(self.MS2_list))]
@@ -291,10 +291,10 @@ class Chromatogram():
         scans = []
         times = []
         scanIDs = []
-        
+
         bestScan = None
         bestScanRTDiff = -1000000
-        
+
         for scanInd, scan in enumerate(self.MS1_list):
             if filterLine == None or scan.filter_line == filterLine:
                 if abs(scan.retention_time - rt) < abs(bestScanRTDiff):
@@ -302,7 +302,7 @@ class Chromatogram():
                     bestScan = scanInd
                 else:
                     break
-                
+
         used = 0
         startWith = 0
         for scanInd in range(bestScan-1, 0, -1):
@@ -323,7 +323,7 @@ class Chromatogram():
                     endWith = scanInd
                 else:
                     break
-                
+
         for scanInd in range(startWith, endWith + 1):
             scan = self.MS1_list[scanInd]
             if filterLine == None or scan.filter_line == filterLine:
@@ -416,10 +416,10 @@ class Chromatogram():
     def decode_spectrum(self, line, peaksCount, compression=None):
         if len(line)>0:
             decoded = base64.b64decode(line)
-            
+
             if compression=="zlib":
                 decoded = zlib.decompress(decoded)
-            
+
             o = np.ndarray((peaksCount, 2), ">f", decoded, 0)  ## mz values: o[:,0], intensities: o[:,1]
             o = o[o[:,1]>0,:] ## remove empty mz values (these are present in profile mode data)
             return o
@@ -583,10 +583,10 @@ class Chromatogram():
 
             try:
                 msLevel=int(specturm["ms level"])
-            except :
+            except Exception:
                 print("Error: What is it?", specturm["id"], type(specturm), specturm)
                 continue
-            
+
             if msLevel == 1:
                 tmp_ms = MS1Scan()
             elif msLevel == 2:
@@ -599,7 +599,7 @@ class Chromatogram():
 
             tmp_ms.retention_time = specturm["scan time"]*60
             tmp_ms.filter_line = ""
-            
+
             tmp_ms.total_ion_current = specturm["total ion current"]
             tmp_ms.list_size = 0
             if specturm["positive scan"] is not None:
@@ -608,11 +608,11 @@ class Chromatogram():
                 tmp_ms.polarity = "-"
             else:
                 raise RuntimeError("No polarity for scan available")
-                
+
             tmp_ms.mz_list = [p[0] for p in specturm.peaks("raw")]
             tmp_ms.intensity_list = [p[1] for p in specturm.peaks("raw")]
             tmp_ms.peak_count = len(tmp_ms.mz_list)
-            
+
             if msLevel == 1:
                 self.MS1_list.append(tmp_ms)
             elif msLevel == 2:

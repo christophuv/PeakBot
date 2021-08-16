@@ -27,26 +27,26 @@ class Config(object):
 
     NAME    = "PeakBot"
     VERSION = "0.9"
-    
+
     RTSLICES       =  32   ## should be of 2^n
-    MZSLICES       = 128   ## should be of 2^m    
+    MZSLICES       = 128   ## should be of 2^m
     NUMCLASSES     =   6   ## [isFullPeak, hasCoelutingPeakLeftAndRight, hasCoelutingPeakLeft, hasCoelutingPeakRight, isWall, isBackground]
     FIRSTNAREPEAKS =   4   ## specifies which of the first n classes represent a chromatographic peak (i.e. if classes 0,1,2,3 represent a peak, the value for this parameter must be 4)
-    
+
     BATCHSIZE     =  32
     STEPSPEREPOCH =  64
     EPOCHS        = 512
-    
+
     DROPOUT        = 0.2
     UNETLAYERSIZES = [32,64,128,256]
-    
+
     LEARNINGRATESTART              = 0.005
     LEARNINGRATEDECREASEAFTERSTEPS = 5
     LEARNINGRATEMULTIPLIER         = 0.9
     LEARNINGRATEMINVALUE           = 3e-7
-    
+
     INSTANCEPREFIX = "___PBsample_"
-    
+
     @staticmethod
     def getAsStringFancy():
         return "\n  | ..".join([
@@ -61,7 +61,7 @@ class Config(object):
             " Prefix for instances: '%s'"%Config.INSTANCEPREFIX,
             " "
         ])
-    
+
     @staticmethod
     def getAsString():
         return ";".join([
@@ -78,12 +78,12 @@ class Config(object):
         ])
 
 
-    
+
 print("Initializing PeakBot")
 try:
     import platform
     print("  | .. OS:", platform.platform())
-except:
+except Exception:
     print("  | .. fetching OS information failed")
 
 print("  | .. TensorFlow version: %s"%(tf.__version__))
@@ -92,35 +92,35 @@ try:
     import cpuinfo
     s = cpuinfo.get_cpu_info()["brand_raw"]
     print("  | .. CPU: %s"%(s))
-except:
+except Exception:
     print("  | .. fetching CPU info failed")
 
 try:
     from psutil import virtual_memory
     mem = virtual_memory()
     print("  | .. Main memory: %.1f GB"%(mem.total/1000/1000/1000))
-except:
+except Exception:
     print("  | .. fetching main memory info failed")
 
 try:
     from numba import cuda as ca
     print("  | .. GPU-device: ", str(ca.get_current_device().name), sep="")
-    
+
     gpus = tf.config.experimental.list_physical_devices()
     for gpu in gpus:
         print("  | .. TensorFlow device: Name '%s', type '%s'"%(gpu.name, gpu.device_type))
-except:
+except Exception:
     print("  | .. fetching GPU info failed")
 
 
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
+
 
 #####################################
 ### Data generator methods
@@ -128,23 +128,23 @@ except:
 ### for PeakBot training and prediction
 ##
 def dataGenerator(folder, instancePrefix = None, verbose=False):
-    
+
     if instancePrefix is None:
         instancePrefix = Config.INSTANCEPREFIX
-    
+
     ite = 0
     while os.path.isfile(os.path.join(folder, "%s%d.pickle"%(instancePrefix, ite))):
-            
-        l = pickle.load(open(os.path.join(folder, "%s%d.pickle"%(instancePrefix, ite)), "rb"))        
-        assert all(np.amax(l["LCHRMSArea"], (1,2)) == 1), "LCHRMSarea is not scaled to a maximum of 1 '%s'"%(str(np.amax(l["LCHRMSArea"], (1,2))))
-        yield l        
-        ite += 1
         
+        l = pickle.load(open(os.path.join(folder, "%s%d.pickle"%(instancePrefix, ite)), "rb"))
+        assert all(np.amax(l["LCHRMSArea"], (1,2)) == 1), "LCHRMSarea is not scaled to a maximum of 1 '%s'"%(str(np.amax(l["LCHRMSArea"], (1,2))))
+        yield l
+        ite += 1
+
 def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
     ite = 0
     l = next(datGen)
     while l is not None:
-        
+
         if verbose and ite == 0:
             logging.info("  | Generated data is")
 
@@ -154,9 +154,9 @@ def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
                 else:
                     logging.info("  | .. gt: %18s  type:  %40s"%(k, type(v)))
             logging.info("  |")
-        
+
         if newBatchSize is not None:
-            
+
             for k in l.keys():
                 if   isinstance(l[k], np.ndarray) and len(l[k].shape)==2:
                     l[k] = l[k][0:newBatchSize,:]
@@ -169,30 +169,30 @@ def modelAdapterTrainGenerator(datGen, newBatchSize = None, verbose=False):
 
                 elif isinstance(l[k], list):
                     l[k] = l[k][0:newBatchSize]
-        
+
         yield {"LCHRMSArea": l["LCHRMSArea"]}, \
-              {"peakType" : l["peakType"], 
-               "center"   : l["center"  ], 
+              {"peakType" : l["peakType"],
+               "center"   : l["center"  ],
                "box"      : l["box"     ],
                #"single"   : l["single"  ],
               }
         l = next(datGen)
-        ite += 1   
-        
+        ite += 1
+
 def modelAdapterTestGenerator(datGen, newBatchSize = None, verbose=False):
     return modelAdapterTrainGenerator(datGen, newBatchSize, verbose)
 
 
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
+
+
 
 
 #####################################
@@ -212,10 +212,10 @@ def iou(boxes1, boxes2):
     Returns:
     iou: a tensor with as a shape of [batch_size, N, MAX_NUM_INSTANCES].
     """
-    with tf.name_scope('BatchIOU'):        
+    with tf.name_scope('BatchIOU'):
         x1_min, x1_max, y1_min, y1_max = tf.split(value=boxes1, num_or_size_splits=4, axis=1)
         x2_min, x2_max, y2_min, y2_max = tf.split(value=boxes2, num_or_size_splits=4, axis=1)
-        
+
         # Calculates the intersection area
         intersection_xmin = tf.maximum(x1_min, x2_min)
         intersection_xmax = tf.minimum(x1_max, x2_max)
@@ -233,7 +233,7 @@ def iou(boxes1, boxes2):
         iou = tf.divide(intersection_area, union_area)
 
         return iou
-    
+
 ## adapted from https://medium.com/analytics-vidhya/custom-metrics-for-keras-tensorflow-ae7036654e05
 def recall(y_true, y_pred):
     true_positives     = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip(y_true * y_pred, 0, 1)))
@@ -276,7 +276,7 @@ def pFPR(y_true, y_pred):
     return 1-precision(tf.cast(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS), tf.float32),
                        tf.cast(tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS), tf.float32))
 
-                        
+
 
 
 def convertGeneratorToPlain(gen, numIters=1):
@@ -293,9 +293,9 @@ def convertGeneratorToPlain(gen, numIters=1):
                 for k in y.keys():
                     y[k] = np.concatenate((y[k], t[1][k]), axis=0)
         else:
-            break            
+            break
     return x,y
-    
+
 ## modified from https://stackoverflow.com/a/47738812
 ## https://github.com/LucaCappelletti94/keras_validation_sets
 class AdditionalValidationSets(tf.keras.callbacks.Callback):
@@ -323,13 +323,13 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
         self.history = []
         self.printWidths = {}
         self.maxLenNames = 0
-    
+
     def addValidationSet(self, validation_set):
         if len(validation_set) not in [3, 4]:
             raise ValueError()
         self.validation_sets.append(validation_set)
-        
-    
+
+
     @timeit
     def on_epoch_end(self, epoch, logs=None, ignoreEpoch = False):
         self.lastEpochNum = epoch
@@ -357,10 +357,10 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                                               sample_weight=sample_weights,
                                               batch_size=self.batch_size,
                                               steps=self.steps)
-                
+
                 self.maxLenNames = max(self.maxLenNames, len(validation_set_name))
                 if self.verbose: print("   %%%ds: "%self.maxLenNames%validation_set_name, end="")
-                
+
                 file_writer = tf.summary.create_file_writer(self.logDir + "/" + validation_set_name)
                 for i, (metric, result) in enumerate(zip(self.model.metrics_names, results)):
                     valuename = "epoch_" + metric
@@ -376,105 +376,105 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                 if self.verbose: print("")
             if self.verbose: print("")
         self.history.append(hist)
-                
+
     def on_train_end(self, logs=None):
         self.on_epoch_end(self.lastEpochNum, logs=logs, ignoreEpoch = True)
-    
+
 class PeakBot():
     def __init__(self, name, ):
         super(PeakBot, self).__init__()
-        
+
         batchSize = Config.BATCHSIZE
         rts = Config.RTSLICES
         mzs = Config.MZSLICES
         numClasses = Config.NUMCLASSES
         version = Config.VERSION
-            
+
         self.name       = name
         self.batchSize  = batchSize
         self.rts        = rts
         self.mzs        = mzs
-        self.numClasses = numClasses        
-        self.model      = None        
+        self.numClasses = numClasses
+        self.model      = None
         self.version    = version
-            
-    
+
+
     @timeit
     def buildTFModel(self, verbose = False):
         dropOutRate = Config.DROPOUT
         uNetLayerSizes = Config.UNETLAYERSIZES
-        
-        if verbose: 
+
+        if verbose:
             print("  | PeakBot v %s model"%(self.version))
             print("  | .. Desc: Detection of a single LC-HRMS peak in an area")
             print("  | ")
-        
+
         ## Input: Only LC-HRMS area
         input_ = tf.keras.Input(shape=(self.rts, self.mzs, 1), name="LCHRMSArea")
         if verbose:
             print("  | .. Inputs")
             print("  | .. .. LCHRMSArea is", input_)
             print("  |")
-        
+
         ## Encoder
         x = input_
         cLayers = [x]
         for i in range(len(uNetLayerSizes)):
-            
+
             x = tf.keras.layers.ZeroPadding2D(padding=2)(x)
             x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (5,5), use_bias=True)(x)
             x = tf.keras.layers.BatchNormalization()(x)
             x = tf.keras.layers.Activation("relu")(x)
-            
+
             #x = tf.keras.layers.Dropout(dropOutRate)(x)
             x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
             x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (3,3), use_bias=True)(x)
             x = tf.keras.layers.BatchNormalization()(x)
             x = tf.keras.layers.Activation("relu")(x)
-            
+
             x = tf.keras.layers.BatchNormalization()(x)
             x = tf.keras.layers.MaxPool2D((2,2))(x)
             cLayers.append(x)
         lastUpLayer = x
-        
+
         ## Intermediate layer and feature properties (indices and borders)
         x = tf.keras.layers.BatchNormalization()(x)
         fx          = tf.keras.layers.Flatten()(x)
         peakType    = tf.keras.layers.Dense(self.numClasses, name="peakType", activation="sigmoid")(fx)
         center      = tf.keras.layers.Dense(              2, name="center"  , activation="relu"   )(fx)
         box         = tf.keras.layers.Dense(              4, name="box"     , activation="relu"   )(fx)
-        
+
         #tf.math.argmax(peakType, axis=1)
         #b_broadcast = tf.zeros(tf.shape(center), dtype=center.dtype)
         #center = tf.where(tf.greater(center, 3), b_broadcast, center)
         #b_broadcast = tf.zeros(tf.shape(box), dtype=box.dtype)
         #box = tf.where(tf.greater(box, 3), b_broadcast, box, name="box")
-        
-      
+
+
         ### Decoder
         #for i in range(len(uNetLayerSizes)-1, -1, -1):
         #    x = tf.keras.layers.UpSampling2D((2,2))(x)
         #    x = tf.concat([x, cLayers[i]], axis=3)
-        #    x = tf.keras.layers.ZeroPadding2D(padding=2)(x) 
+        #    x = tf.keras.layers.ZeroPadding2D(padding=2)(x)
         #    x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (5,5), use_bias=True)(x)
         #    x = tf.keras.layers.BatchNormalization()(x)
         #    x = tf.keras.layers.Activation("relu")(x)
-        #    
-        #    x = tf.keras.layers.ZeroPadding2D(padding=1)(x) 
+        #
+        #    x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
         #    x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (3,3), use_bias=True)(x)
         #    x = tf.keras.layers.BatchNormalization()(x)
         #    if i > 0:
         #        x = tf.keras.layers.Add()([x, cLayers[i]])
         #    x = tf.keras.layers.Activation("relu")(x)
-                
+
         #x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
         #x = tf.keras.layers.Conv2D(1, (3,3))(x)
         #x = tf.keras.layers.BatchNormalization()(x)
-        
+
         #x = tf.keras.layers.Activation("sigmoid", name="single")(x)
         #single = x
-            
-        if verbose: 
+
+        if verbose:
             print("  | .. Intermediate layer")
             print("  | .. .. lastUpLayer is", lastUpLayer)
             print("  | .. .. fx          is", fx)
@@ -488,7 +488,7 @@ class PeakBot():
             print("  | ")
 
         self.model = tf.keras.models.Model(input_, [peakType, center, box]) #, single])
-    
+
     @timeit
     def compileModel(self, learningRate = None):
         if learningRate is None:
@@ -514,21 +514,21 @@ class PeakBot():
                         #"single"   : 1,
                       }
         )
-    
+
     @timeit
     def train(self, datTrain, datVal, logDir = None, callbacks = None, verbose = 1):
         epochs = Config.EPOCHS
         steps_per_epoch = Config.STEPSPEREPOCH
-        
-        if verbose: 
+
+        if verbose:
             print("  | Fitting model on training data")
             print("  | .. Logdir is '%s'"%logDir)
             print("  | .. Number of epochs %d"%(epochs))
             print("  |")
-        
+
         if logDir is None:
             logDir = os.path.join("logs", "fit", "PeakBot_v" + self.version + "_" + uuid.uuid4().hex)
-        
+
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logDir, histogram_freq = 1, write_graph = True)
         file_writer = tf.summary.create_file_writer(os.path.join(logDir, "scalars"))
         file_writer.set_as_default()
@@ -551,24 +551,24 @@ class PeakBot():
             steps_per_epoch = steps_per_epoch,
 
             callbacks = _callBacks,
-            
+
             verbose = verbose
         )
-        
+
         return history
-    
+
     def loadFromFile(self, modelFile):
         self.model = tf.keras.models.load_model(modelFile, custom_objects = {"iou": iou})
-    
+
     def saveModelToFile(self, modelFile):
         self.model.save(modelFile)
-        
 
 
-    
-    
-    
-    
+
+
+
+
+
 @timeit
 def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInstancesPath = None, addValidationInstances = None, everyNthEpoch = 15, verbose = False):
     tic("pbTrainNewModel")
@@ -576,17 +576,17 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
     ## name new model
     if modelName is None:
         modelName = "%s%s__%s"%(Config.NAME, Config.VERSION, uuid.uuid4().hex[0:6])
-        
+
     ## log information to folder
     logDir = os.path.join(logBaseDir, modelName)
     logger = tf.keras.callbacks.CSVLogger(os.path.join(logDir, "clog.tsv"), separator="\t")
-    
+
     if verbose:
         print("Training new PeakBot model")
         print("  | Model name is '%s'"%(modelName))
         print("  | .. config is")
         print(Config.getAsStringFancy().replace(";", "\n"))
-        print("  |")            
+        print("  |")
 
     ## define learning rate schedule
     def lrSchedule(epoch, lr):
@@ -597,7 +597,7 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         return max(lr, Config.LEARNINGRATEMINVALUE)
     lrScheduler = tf.keras.callbacks.LearningRateScheduler(lrSchedule, verbose=False)
 
-    ## create generators for training data (and validation data if available) 
+    ## create generators for training data (and validation data if available)
     datGenTrain = modelAdapterTrainGenerator(dataGenerator(trainInstancesPath, verbose = verbose), newBatchSize = Config.BATCHSIZE, verbose = verbose)
     datGenVal   = None
     if valInstancesPath is not None:
@@ -605,17 +605,18 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         datGenVal = tf.data.Dataset.from_tensors(next(datGenVal))
 
     ## add additional validation datasets to monitor model performance during the trainging process
-    valDS = AdditionalValidationSets(logDir, 
+    valDS = AdditionalValidationSets(logDir,
                                      batch_size=Config.BATCHSIZE,
-                                     everyNthEpoch = everyNthEpoch, 
+                                     everyNthEpoch = everyNthEpoch,
                                      verbose = verbose)
     if addValidationInstances is not None:
-        if verbose: 
+        if verbose:
             print("  | Additional validation datasets")
         for valInstance in addValidationInstances:
             x,y = None, None
             if "folder" in valInstance.keys():
-                datGen  = modelAdapterTestGenerator(dataGenerator(valInstance["folder"]), 
+                print("Adding", valInstance["folder"])
+                datGen  = modelAdapterTestGenerator(dataGenerator(valInstance["folder"]),
                                                     newBatchSize = Config.BATCHSIZE)
                 numBatches = valInstance["numBatches"] if "numBatches" in valInstance.keys() else 1
                 x,y = convertGeneratorToPlain(datGen, numBatches)
@@ -624,67 +625,67 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
                 y = valInstance["y"]
             if x is not None and y is not None and "name" in valInstance.keys():
                 valDS.addValidationSet((x,y, valInstance["name"]))
-                if verbose: 
+                if verbose:
                     print("  | .. %s: %d instances"%(valInstance["name"], x["LCHRMSArea"].shape[0]))
-                    
+
             else:
                 raise RuntimeError("Unknonw additional validation dataset")
         if verbose:
             print("  |")
-        
+
     ## instanciate a new model and set its parameters
     pb = PeakBot(modelName)
     pb.buildTFModel(verbose = verbose)
     pb.compileModel(learningRate = Config.LEARNINGRATESTART)
-    
+
     ## train the model
     history = pb.train(
-        datTrain = datGenTrain, 
-        datVal   = datGenVal, 
+        datTrain = datGenTrain,
+        datVal   = datGenVal,
 
-        logDir = logDir, 
+        logDir = logDir,
         callbacks = [logger, lrScheduler, valDS],
 
         verbose = verbose * 2
     )
-    
+
     ## save metrices of the training process in a user-convenient format (pandas table)
     metricesAddValDS = pd.DataFrame(columns=["model", "set", "metric", "value"]);
     if addValidationInstances is not None:
         hist = valDS.history[-1]
         for valInstance in addValidationInstances:
-    
+
             se = valInstance["name"]
             for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_iou"]:
                 val = hist[se + "_" + metric]
                 newRow = pd.Series({"model": modelName, "set": se, "metric": metric, "value": val})
                 metricesAddValDS = metricesAddValDS.append(newRow, ignore_index=True)
-    
-    if verbose: 
+
+    if verbose:
         print("  |")
         print("  | .. model built and trained successfully (took %.1f seconds)"%toc("pbTrainNewModel"))
-    
+
     return pb, metricesAddValDS
 
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @timeit
 def runPeakBot(pathFrom, modelPath, verbose = True):
     tic("detecting with peakbot")
-    
+
     peaks = []
     backgrounds = 0
     walls = 0
@@ -692,21 +693,21 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
 
     peaksDone = 0
     debugPrinted = 0
-    if verbose: 
+    if verbose:
         print("Detecting peaks with PeakBot")
         print("  | .. loading PeakBot model '%s'"%(modelPath))
         print("  | .. detecting peaks in the areas in the folder '%s'"%(pathFrom))
-        
-    model = tf.keras.models.load_model(modelPath, custom_objects = {"iou": iou,"recall": recall, 
-                                                                    "precision": precision, "specificity": specificity, 
-                                                                    "negative_predictive_value": negative_predictive_value, 
+
+    model = tf.keras.models.load_model(modelPath, custom_objects = {"iou": iou,"recall": recall,
+                                                                    "precision": precision, "specificity": specificity,
+                                                                    "negative_predictive_value": negative_predictive_value,
                                                                     "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR})
-    
+
     allFiles = os.listdir(pathFrom)
     l = pickle.load(open(os.path.join(pathFrom, allFiles[0]), "rb"))
-    
+
     with tqdm.tqdm(total = l["LCHRMSArea"].shape[0] * len(allFiles), desc="  | .. detecting chromatographic peaks", unit="instances", disable=not verbose) as pbar:
-    
+
         for fi in os.listdir(pathFrom):
             l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
 
@@ -725,7 +726,7 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
                 prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]
 
                 if ptyp == 0 or ptyp == 1 or ptyp == 2 or ptyp == 3:
-                    try:                      
+                    try:
                         prt, pmz = -1, -1
                         if 0 <= prtInd < l["areaRTs"].shape[1]:
                             prt = l["areaRTs"][j,prtInd]
@@ -752,16 +753,16 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
                         if prt!=-1 and pmz!=-1 and prtstart!=-1 and prtend!=-1 and pmzstart!=-1 and pmzend!=-1:
                             peaks.append([prt, pmz, prtstart, prtend, pmzstart, pmzend, 0, 1])
 
-                    except:
+                    except Exception:
                         errors += 1
 
                 elif ptyp == 4:
                     walls += 1
                 elif ptyp == 5:
                     backgrounds += 1
-                else: 
+                else:
                     errors += 1
-        
+
         pbar.update(l["LCHRMSArea"].shape[0])
 
     if verbose:
@@ -773,11 +774,11 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
             print("  | .. encountered %d errors"%(errors))
         print("  | .. took %.1f seconds"%(toc("detecting with peakbot")))
         print("")
-        
+
     return peaks, walls, backgrounds, errors
 
 @timeit
-def exportPeakBotResultsFeatureML(peaks, fileTo):                
+def exportPeakBotResultsFeatureML(peaks, fileTo):
     with open(fileTo, "w") as fout:
         fout.write('<?xml version="1.0" encoding="ISO-8859-1"?>\n')
         fout.write('  <featureMap version="1.4" id="fm_16311276685788915066" xsi:noNamespaceSchemaLocation="http://open-ms.sourceforge.net/schemas/FeatureXML_1_4.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n')
@@ -823,25 +824,25 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
     cur = 0
     import plotnine as p9
     import pandas as pd
-    
+
     for fi in tqdm.tqdm(os.listdir(pathFrom)):
         l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
-        
+
         lcmsArea = l["LCHRMSArea"]
         areaRTs  = l["areaRTs"]
         areaMZs  = l["areaMZs"]
-        
+
         pred = None
         if model is not None:
             pred = model.predict(lcmsArea)
-            
+
         for j in range(lcmsArea.shape[0]):
-            
+
             if expFrom <= cur <= expTo:
-            
+
                 maxExport = maxExport - 1
                 if maxExport < 0:
-                    return 
+                    return
 
                 title = None
 
@@ -881,8 +882,8 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
 
                 dat = pd.DataFrame({"rts": rts, "mzs": mzs, "Intensity": ints, "typ": typs, "alpha": alphas})
                 ## Plot LCMS area and mask
-                plot = (p9.ggplot(dat, p9.aes("rts", "mzs", alpha="alpha", colour="Intensity")) + 
-                        p9.geom_point() + 
+                plot = (p9.ggplot(dat, p9.aes("rts", "mzs", alpha="alpha", colour="Intensity")) +
+                        p9.geom_point() +
                         p9.facet_wrap("~typ", ncol=6) +
                         p9.xlim(areaRTs[j,0], areaRTs[j, areaRTs.shape[1]-1]) + p9.ylim(areaMZs[j,0], areaMZs[j, areaMZs.shape[1]-1])
                        )
@@ -891,7 +892,7 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
 
                 if "peakType" in l.keys():
                     rt, mz, rtLeftBorder, rtRightBorder, mzLowest, mzHighest = -1, -1, -1, -1, -1, -1
-                    typ = int(l["peakType"][j,0]) 
+                    typ = int(l["peakType"][j,0])
                     apexRTInd, apexMZInd = [int(i) for i in l["center"][j,:]]
                     rtLeftBorderInd, rtRightBorderInd, mzLowestInd, mzHighestInd = [int(i) for i in l["box"][j,:]]
                     if 0 <= apexRTInd < l["areaRTs"].shape[1]:
@@ -908,17 +909,17 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
                     if 0 <= mzHighestInd < l["areaMZs"].shape[1]:
                         mzHighest = l["areaMZs"][j,mzHighestInd]
 
-                    plot = (plot + p9.geom_rect(xmin = rtLeftBorder, 
-                                                xmax = rtRightBorder, 
-                                                ymin = mzLowest, 
-                                                ymax = mzHighest, 
-                                                fill=None, 
-                                                color="yellowgreen", 
-                                                linetype="solid", 
+                    plot = (plot + p9.geom_rect(xmin = rtLeftBorder,
+                                                xmax = rtRightBorder,
+                                                ymin = mzLowest,
+                                                ymax = mzHighest,
+                                                fill=None,
+                                                color="yellowgreen",
+                                                linetype="solid",
                                                 size=0.1) +
-                                   p9.geom_text(label="X", 
-                                                x=rt, 
-                                                y=mz, 
+                                   p9.geom_text(label="X",
+                                                x=rt,
+                                                y=mz,
                                                 color="yellowgreen") )
 
                     title = "" if title is None else title + "\n"
@@ -943,17 +944,17 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
                     if 0 <= gdmzEndInd < l["areaMZs"].shape[1]:
                         gdmzend = l["areaMZs"][j, gdmzEndInd]
 
-                    plot = (plot + p9.geom_rect(xmin = gdrtstart, 
-                                                xmax = gdrtend, 
-                                                ymin = gdmzstart, 
-                                                ymax = gdmzend, 
-                                                fill=None, 
-                                                color="orange", 
-                                                linetype="solid", 
+                    plot = (plot + p9.geom_rect(xmin = gdrtstart,
+                                                xmax = gdrtend,
+                                                ymin = gdmzstart,
+                                                ymax = gdmzend,
+                                                fill=None,
+                                                color="orange",
+                                                linetype="solid",
                                                 size=0.1) +
-                                   p9.geom_text(label="X", 
-                                                x=gdrt, 
-                                                y=gdmz, 
+                                   p9.geom_text(label="X",
+                                                x=gdrt,
+                                                y=gdmz,
                                                 color="orange"))
 
                     title = "" if title is None else title + "\n"
@@ -964,11 +965,11 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
                 if pred is not None:
                     pisFullPeak, pisPartPeak, phasCoElutionLeft, phasCoElutionRight, pisBackground, pisWall = [bool(i) for i in np.squeeze(np.eye(6)[np.argmax(np.array(pred[0][j,:])).reshape(-1)])]
                     prtInd, pmzInd = [round(i) for i in pred[1][j,:]]
-                    prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]                    
+                    prtstartInd, prtendInd, pmzstartInd, pmzendInd = [round(i) for i in pred[2][j, :]]
 
                     if pisFullPeak or pisPartPeak or phasCoElutionLeft or phasCoElutionRight:
                         try:
-                            ## properties: rt, mz, rtFirstSlice, rtLastSlice, mzFirstSlice, mzLastSlice, ppmdev, leftRTBorder, rightRTBorder                        
+                            ## properties: rt, mz, rtFirstSlice, rtLastSlice, mzFirstSlice, mzLastSlice, ppmdev, leftRTBorder, rightRTBorder
                             if 0 <= prtInd < l["areaRTs"].shape[1]:
                                 prt = l["areaRTs"][j,prtInd]
                             if 0 <= pmzInd < l["areaMZs"].shape[1]:
@@ -984,25 +985,25 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
                             if 0 <= pmzendInd < l["areaMZs"].shape[1]:
                                 pmzend = l["areaMZs"][j, pmzendInd]
 
-                            plot = (plot + p9.geom_rect(xmin = prtstart, 
-                                                        xmax = prtend, 
-                                                        ymin = pmzstart, 
-                                                        ymax = pmzend, 
-                                                        fill=None, 
-                                                        color="firebrick", 
-                                                        linetype="solid", 
+                            plot = (plot + p9.geom_rect(xmin = prtstart,
+                                                        xmax = prtend,
+                                                        ymin = pmzstart,
+                                                        ymax = pmzend,
+                                                        fill=None,
+                                                        color="firebrick",
+                                                        linetype="solid",
                                                         size=0.1) +
-                                           p9.geom_text(label="X", 
-                                                        x=prt, 
-                                                        y=pmz, 
+                                           p9.geom_text(label="X",
+                                                        x=prt,
+                                                        y=pmz,
                                                         color="firebrick")) # + p9.geom_hline(yintercept=pmz)+p9.geom_vline(xintercept=prt))
-                        except:
+                        except Exception:
                             import traceback
                             traceback.print_exc()
 
                     title = "" if title is None else title + "\n"
                     title = title + "Predicted   : RT %.2f (box %.2f - %.2f), MZ %.4f (box %.4f - %.4f, %.1f ppm); Type '%s'"%(prt, prtstart, prtend, pmz, pmzstart, pmzend, (pmzend-pmzstart)*1E6/pmz, ["Single peak", "Isomers earlier and later", "Isomer earlier", "Isomer later", "Background", "Wall"][np.argmax(np.array(pred[0][j,:]))])
-                plot = (plot + 
+                plot = (plot +
                         p9.ggtitle(title) + p9.xlab("Retention time (seconds)") + p9.ylab("m/z"))
 
                 p9.ggsave(plot=plot, filename=os.path.join(toFolder, "%d.png"%(cur)), height=7, width=12)
@@ -1011,25 +1012,25 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
 
 
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 @timeit
@@ -1083,7 +1084,7 @@ def showSummaryPlots(peaks, maximaProps, maximaPropsAll, polarity, highlights = 
         plt.scatter(maximaProps[pheInd,2], maximaProps[pheInd,3], color = "Orange")
     plt.title("Feature map"); plt.xlabel("Rt (seconds)"); plt.ylabel("M/Z")
     plt.show(block = False)
-    
+
     if highlights != None and len(highlights) > 0:
         ## highlights must be a dict of "name": (rt in sec, mz, rt plus/minus, ppm plus/minus)
 
@@ -1122,7 +1123,7 @@ def showSummaryPlots(peaks, maximaProps, maximaPropsAll, polarity, highlights = 
     plt.show(block = False)
 
     print("\n\n\n")
-    temp = peaks[:,6] *1E6 / peaks[:,3] 
+    temp = peaks[:,6] *1E6 / peaks[:,3]
     popt, pcov = scipy.optimize.curve_fit(funcLogarithmic, peaks[:,3], temp)
     plt.scatter(peaks[:,3], temp, alpha=0.02)
     res = scipy.stats.linregress(peaks[:,3], temp)
@@ -1142,14 +1143,3 @@ def showSummaryPlots(peaks, maximaProps, maximaPropsAll, polarity, highlights = 
     plt.show(block = False)
 
     tocAddStat("Summary overview and graphs")
-
-
-
-            
-            
-            
-
-            
-
-            
-
