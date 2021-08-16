@@ -18,8 +18,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                           intraScanMaxAdjacentSignalDifferencePPM, interScanMaxSimilarSignalDifferencePPM, 
                           
                           updateToLocalPeakProperties = False, 
-                          RTpeakWidth = None, minApexBorderRatio = None, minIntensity = None, 
+                          RTpeakWidth = None, minApexBorderRatio = 4, minIntensity = None, 
                           maxRTOffset = 5, maxMZOffset = 10,
+                          
                           
                           maxPopulation = 5, intensityScales = 10, randomnessFactor = 0.1, 
                           instancePrefix = None,
@@ -728,7 +729,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         instances[instanceInd, x, y] = instances[instanceInd, x, y] / mVal
     generateTestExamples = cuda.jit()(_generateTestExamples)
     
-    rng_states = create_xoroshiro128p_states(griddim* blockdim, seed=2021)
+    rng_states = create_xoroshiro128p_states(griddim * blockdim, seed=2021)
     cuda.synchronize()
     
     

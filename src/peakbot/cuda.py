@@ -620,8 +620,11 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
        
 
 @timeit
-def preProcessChromatogram(mzxml, fileIdentifier, intraScanMaxAdjacentSignalDifferencePPM, interScanMaxSimilarSignalDifferencePPM, RTpeakWidth, 
-                           minApexBorderRatio, minIntensity, exportPath, exportLocalMaxima = "peak-like-shape", 
+def preProcessChromatogram(mzxml, fileIdentifier, 
+                           intraScanMaxAdjacentSignalDifferencePPM, interScanMaxSimilarSignalDifferencePPM, 
+                           RTpeakWidth, 
+                           minIntensity, exportPath, exportLocalMaxima = "peak-like-shape", 
+                           minApexBorderRatio = 4, 
                            blockdim = 32, griddim = 64,
                            gdMZminRatio = 0.1, gdRTminRatio = 0.01, 
                            eicWindowPlusMinus = 30, SavitzkyGolayWindowPlusMinus = 3,
