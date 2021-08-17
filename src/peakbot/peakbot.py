@@ -13,6 +13,7 @@ import tensorflow as tf
 import numpy as np
 import scipy
 import pandas as pd
+import plotnine as p9
 
 import tqdm
 
@@ -1143,3 +1144,87 @@ def showSummaryPlots(peaks, maximaProps, maximaPropsAll, polarity, highlights = 
     plt.show(block = False)
 
     tocAddStat("Summary overview and graphs")
+
+    
+    
+def _findMZGeneric(mzs, ints, times, peaksCount, scanInd, mzRef, mzleft, mzright):
+
+    if peaksCount[scanInd]==0:
+        return -1
+
+    min = 0
+    max = peaksCount[scanInd]
+
+    while min <= max:
+        cur = int((max + min) // 2)
+
+        if mzleft <= mzs[scanInd, cur] <= mzright:
+            
+            ## continue search to the left side
+            while cur-1 >= 0 and mzs[scanInd, cur-1] >= mzleft and abs(mzRef - mzs[scanInd, cur-1]) < abs(mzRef - mzs[scanInd, cur]):
+                cur = cur - 1
+            ## continue search to the right side
+            while cur+1 < peaksCount[scanInd] and mzs[scanInd, cur+1] <= mzright and abs(mzRef - mzs[scanInd, cur+1]) < abs(mzRef - mzs[scanInd, cur]):
+                cur = cur + 1
+            
+            return cur
+
+        if mzs[scanInd, cur] > mzright:
+            max = cur - 1
+        else:
+            min = cur + 1
+
+    return -1
+    
+def estimateParameters(chrom, to):
+    mzs, ints, times, peaksCount = chrom.convertChromatogramToNumpyObjects(verbose = False)
+    
+    ## calculate differences intraScan
+    mz = mzs[:,1:].flatten()
+    diff = np.diff(mzs).flatten()*1E6/mz
+    df = pd.DataFrame({"MZ": mz, "DiffPPM": diff})
+    
+    ## remove non-signals
+    df = df.where(df["MZ"]<100000000.0)
+    
+    
+    ## select largest MZ values
+    maxmz = df["MZ"].max()
+    minmz = df["MZ"].min()
+    incMZ = minmz + (maxmz - minmz) * 0.9
+    df = df.where(df["MZ"] >= incMZ)
+        
+    df.sort_values("MZ", inplace=True, ascending=False)
+    df.dropna(inplace = True)
+    
+    minV = df["DiffPPM"].min()
+    medianV = df["DiffPPM"].median()
+    meanV = df["DiffPPM"].mean()
+    maxV = df["DiffPPM"].max()
+    print("Intra-scan PPM differences are min: %.1f, median: %.1f, mean: %.1f, max: %.1f"%(minV, medianV, meanV, maxV))
+    
+    suggestedIntraScanPPM = minV * 4
+    
+    mz = []
+    diff = []
+    for scanInd in range(mzs.shape[0]):
+        for peakInd in range(peaksCount[scanInd]):
+            if scanInd > 0 and mzs[scanInd, peakInd] >= incMZ:
+                pI = _findMZGeneric(mzs, ints, times, peaksCount, scanInd-1, mzs[scanInd, peakInd], mzs[scanInd, peakInd]*(1-suggestedIntraScanPPM/1E6), mzs[scanInd, peakInd]*(1+suggestedIntraScanPPM/1E6))
+                if pI > -1:
+                    oMZ = mzs[scanInd-1, pI]
+                    mz.append(mzs[scanInd, peakInd])
+                    diff.append(abs(oMZ-mzs[scanInd, peakInd])*1E6/mzs[scanInd, peakInd])
+    
+    df = pd.DataFrame({"MZ": mz, "DiffPPM": diff})
+        
+    df.sort_values("DiffPPM", inplace=True, ascending=False)
+    
+    minV = df["DiffPPM"].min()
+    medianV = df["DiffPPM"].median()
+    meanV = df["DiffPPM"].mean()
+    maxV = df["DiffPPM"].max()
+    print("Inter-scan PPM differences are min: %.1f, median: %.1f, mean: %.1f, max: %.1f"%(minV, medianV, meanV, maxV))
+    
+    return suggestedIntraScanPPM
+    
