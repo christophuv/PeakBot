@@ -193,9 +193,12 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
             background[0]=0
             crts = maximaPropsAll[:,2]
             cmzs = maximaPropsAll[:,3]
-            maximaPropsAll[:,7] = np.logical_or(maximaPropsAll[:,7], np.logical_and(np.logical_and(background[0] <= crts, crts <= background[1]), np.logical_and(background[2] <= cmzs, cmzs <= background[3])))
+            maximaPropsAll[:,7] = np.logical_or(maximaPropsAll[:,7]==0, np.logical_and(np.logical_and(background[0] <= crts, crts <= background[1]), np.logical_and(background[2] <= cmzs, cmzs <= background[3])))
         backgrounds = maximaPropsAll[maximaPropsAll[:,7]>0,:]
         backgrounds = backgrounds[:,[2,3,5]]
+        if backgrounds.shape[0] > 10000:
+            print("  | .. restricting %d backgrounds to a manageable size of 1000"%(backgrounds.shape[0]))
+            backgrounds = backgrounds[np.random.choice(backgrounds.shape[0], 1000, replace=False),:]
 
 
         if verbose:
@@ -203,7 +206,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
             print("  | .. took %.1f seconds"%(toc("restricting")))
             print("  | ")
 
-        TabLog().addData(fileIdentifier, "n local walls", "%d (/%d)"%(backgrounds.shape[0], oriRefBackgrounds))
+        TabLog().addData(fileIdentifier, "n local backgrounds", "%d (/%d)"%(backgrounds.shape[0], oriRefBackgrounds))
 
 
         d_mzs = None; d_ints = None; d_times = None; d_peaksCount = None
@@ -322,7 +325,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     ##        mz, rtstart, rtend, mzDeviation
     ##
     ## backgrounds: list of arrays with the elements:
-    ##        rtStart, rtEnd, mzLow, mzHigh
+    ##        rt, mz, mzdev
     ##
     ## Note: walls and backgrounds can be very large, rt center will be picked randomly
     ## Note: actual mz deviation of peaks will be randomized but is at least mzLowerBorder and mzUpperBorder
@@ -335,12 +338,13 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
         ## Classes of training instances
         ## Main classes
-        rClass = cuda.local.array(shape = (7), dtype=numba.float32)
+        rClass = cuda.local.array(shape = (8), dtype=numba.float32)
         rClass[0] = 0; rClass[1] = 1; rClass[2] = 2; rClass[3] = 3;
-        rClass[4] = 4; rClass[5] = 1; rClass[6] = 1;
+        rClass[4] = 4; rClass[5] = 1; rClass[6] = 1; rClass[7] = 5;
         ## Distraction classes
-        dClass = cuda.local.array(shape = (4), dtype=numba.float32)
+        dClass = cuda.local.array(shape = (5), dtype=numba.float32)
         dClass[0] = 0; dClass[1] = 0; dClass[2] = 0; dClass[3] = 4;
+        dClass[4] = 5;
 
         lInd = cuda.grid(1)
         lLen = cuda.gridsize(1)
@@ -414,10 +418,10 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mzDevPPM  = backgrounds[ind, 2]
                         devMult   = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
 
-                        mpRT      = centerRT
-                        mpMZ      = peaks[ind,1]
-                        mpRTLeft  = centerRT - 8 * meanDifferenceScans
-                        mpRTRight = centerRT + 8 * meanDifferenceScans
+                        mpRT      = backgrounds[ind, 0]
+                        mpMZ      = backgrounds[ind, 1]
+                        mpRTLeft  = backgrounds[ind, 0] - (xoroshiro128p_uniform_float32(rng_states, lInd)*4+1) * meanDifferenceScans
+                        mpRTRight = backgrounds[ind, 0] + (xoroshiro128p_uniform_float32(rng_states, lInd)*4+1) * meanDifferenceScans
                         mpMZLow   = mpMZ * (1 - backgrounds[ind, 2] / 2 / 1E6)
                         mpMZHigh  = mpMZ * (1 + backgrounds[ind, 2] / 2 / 1E6)
 
@@ -434,7 +438,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
                     ## Peak
                     if typR <= 3:
-                        typ = 0
                         tries = 40
                         ok = False
                         while tries > 0 and not ok:
@@ -501,12 +504,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
                             cmzDiff  = mpMZ - backgrounds[sind, 1]
                             centerMZ = backgrounds[sind, 1] + mzOffset
-
-                            if ((mzOffset > 0 and (backgrounds[sind, 1] + mzOffset) * (1 - mzDevPPM / 2 / 1E6)+cmzDiff > mpMZHigh) or \
-                                (mzOffset <= 0 and (backgrounds[sind, 1] + mzOffset) * (1 + mzDevPPM / 2 / 1E6)+cmzDiff < mpMZLow)) and \
-                               ((backgrounds[sind, 0] < mpRT and backgrounds[sind,0] < mpRTLeft) or \
-                                (backgrounds[sind, 0] > mpRT and mpRTRight < backgrounds[sind,0])):
-                                ok = True
+                            ok = True
                         if not ok:
                             continue
 

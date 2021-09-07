@@ -932,3 +932,268 @@ def postProcess(mzxml, fileIdentifier, peaks,
         TabLog().addData(fileIdentifier, "postprocessing (sec)", toc("postprocessing"))
 
     return peaks
+
+
+
+
+
+
+
+
+
+
+
+
+def _KNNFeaturesCUDA(features, featuresOri, neighbors, rtMaxDiff, ppmMaxDiff, nearestNeighbors, rtWeight, mzWeight):
+    lInd = cuda.grid(1)
+    lLen = cuda.gridsize(1)
+    
+    for rowi in range(lInd, features.shape[0], lLen):
+        rtR = features[rowi, 2]
+        mzR = features[rowi, 3]
+        
+        for tempi in range(nearestNeighbors):
+            neighbors[rowi, tempi, 0] = -1
+            neighbors[rowi, tempi, 1] = -1
+            neighbors[rowi, tempi, 2] = -1
+            neighbors[rowi, tempi, 3] = -1
+        
+        for coli in range(features.shape[0]):
+            rtC = features[coli, 2]
+            mzC = features[coli, 3]
+            
+            rtDiff = abs(rtR - rtC)
+            mzDiff = abs(mzR - mzC)
+            
+            if rowi != coli and rtDiff <= rtMaxDiff and mzDiff*1E6/mzR <= ppmMaxDiff:
+                dist = math.sqrt((rtDiff*rtWeight)**2 + (mzDiff*mzWeight)**2)
+                for testi in range(nearestNeighbors):
+                    if neighbors[rowi, testi, 0] == -1 or dist < neighbors[rowi, testi, 1]:
+                        for tempi in range(nearestNeighbors-1, testi, -1):
+                            neighbors[rowi, tempi, 0] = neighbors[rowi, tempi-1, 0]
+                            neighbors[rowi, tempi, 1] = neighbors[rowi, tempi-1, 1]
+                            neighbors[rowi, tempi, 2] = neighbors[rowi, tempi-1, 2]
+                            neighbors[rowi, tempi, 3] = neighbors[rowi, tempi-1, 3]
+                        neighbors[rowi, testi, 0] = coli
+                        neighbors[rowi, testi, 1] = dist
+                        neighbors[rowi, testi, 2] = features[coli, 2]
+                        neighbors[rowi, testi, 3] = features[coli, 3]
+                        break
+
+global _KNNFeatures
+_KNNFeatures = cuda.jit()(_KNNFeaturesCUDA)
+
+def _updateIdenticalsCUDA(features, featuresOri, neighbors, rtMaxDiff, ppmMaxDiff, nearestNeighbors, rtWeight, mzWeight):
+    lInd = cuda.grid(1)
+    lLen = cuda.gridsize(1)
+    
+    for rowi in range(lInd, features.shape[0], lLen):
+        
+        ## update to mean value
+        n = 1
+        rtsum = features[rowi, 2]
+        mzsum = features[rowi, 3]
+
+        for tempi in range(nearestNeighbors):
+            if neighbors[rowi, tempi, 0] > -1:
+                n = n + 1
+                rtsum = rtsum + neighbors[rowi, tempi, 2]
+                mzsum = mzsum + neighbors[rowi, tempi, 3]
+
+        features[rowi, 2] = rtsum / n
+        features[rowi, 3] = mzsum / n
+        
+global _updateIdenticals
+_updateIdenticals = cuda.jit()(_updateIdenticalsCUDA)    
+
+
+@timeit 
+def KNNalignFeatures(features, featuresOri, rtMaxDiff, ppmMaxDiff, nearestNeighbors, rtWeight = 1, mzWeight = 0.1, blockdim = 128, griddim = 64):
+    
+    tic("aligning")
+    print("Aligning %d features"%(features.shape[0]))
+    
+    if len(rtMaxDiff) != len(ppmMaxDiff) or len(ppmMaxDiff) != len(nearestNeighbors):
+        raise RuntimeError("Error: the parameters rtMaxDiff, ppmMaxDiff and nearestNeighbors must be arrays of the same length")
+        
+    neighbors = np.zeros((features.shape[0], max(nearestNeighbors), 4), dtype=np.float32)
+    
+    d_features = cuda.to_device(features)
+    d_featuresOri = cuda.to_device(featuresOri)
+    d_neighbors = cuda.to_device(neighbors)
+    cuda.synchronize()
+    
+    for i in range(len(nearestNeighbors)):
+        cknn = nearestNeighbors[i]
+        crtMaxDiff = rtMaxDiff[i]
+        cppmMaxDiff = ppmMaxDiff[i]
+        
+        print("  | .. iteration %d with %d k-nearest neighbors"%(i+1, cknn))
+        
+        _KNNFeatures[griddim, blockdim](d_features, d_featuresOri, d_neighbors, crtMaxDiff, cppmMaxDiff, cknn, rtWeight, mzWeight)
+        cuda.synchronize()
+        
+        _updateIdenticals[griddim, blockdim](d_features, d_featuresOri, d_neighbors, crtMaxDiff, cppmMaxDiff, cknn, rtWeight, mzWeight)
+        cuda.synchronize()
+        
+    
+    features = d_features.copy_to_host()
+    
+    d_features = None
+    d_featuresOri = None
+    d_neighbors = None
+    cuda.defer_cleanup()
+    
+    print("  | .. took %.1f seconds"%(toc("aligning")))
+    print("")
+    
+    return features
+
+
+
+        
+
+def _groupFeaturesCUDA(features, featuresOri, blocks, rtMaxDiff, ppmMaxDiff, rtWeight, mzWeight):
+    lInd = cuda.grid(1)
+    lLen = cuda.gridsize(1)
+    
+    for blocki in range(lInd, blocks.shape[0], lLen):
+        
+        if blocks[blocki,1] - blocks[blocki,0] == 1:
+            ## only a single feature is present, Not much to do
+            features[blocks[blocki, 0], 9] = blocks[blocki, 0]
+            continue
+        
+        else:
+            ## delete current feature membership
+            for rowi in range(blocks[blocki, 0], blocks[blocki, 1]):
+                features[rowi, 9] = -1
+            
+            run = True
+            while run:
+                ## find the two features closest to each other
+                bestDist = 1E8
+                bestA = -1
+                bestB = -1
+
+                for rowa in range(blocks[blocki,0], blocks[blocki,1]):
+                    for rowb in range(rowa+1, blocks[blocki,1]):
+                        if features[rowa, 9] == -1 or features[rowb, 9] == -1 or features[rowa, 9] != features[rowb, 9]:
+                            rtDiff = abs(features[rowa, 2] - features[rowb, 2])
+                            mzDiff = abs(features[rowa, 3] - features[rowb, 3])
+                            if rtDiff <= rtMaxDiff and mzDiff * 1E6 / features[rowa, 3] <= ppmMaxDiff:
+                                dist = math.sqrt((rtDiff*rtWeight)**2 + (mzDiff*mzWeight)**2)
+                                if dist < bestDist:
+                                    bestDist = dist
+                                    bestA = rowa
+                                    bestB = rowb
+
+                if bestA == -1 and bestB == -1:
+                    ## No close-by features found, separate each remaining feature into a unique group
+                    for rowi in range(blocks[blocki, 0], blocks[blocki, 1]):
+                        if features[rowi, 9] == -1:
+                            features[rowi, 9] = rowi
+                    run = False
+                
+                elif features[bestA, 9] == -1 and features[bestB, 9] == -1:
+                    features[bestA, 9] = bestA
+                    features[bestB, 9] = bestA
+                elif features[bestA, 9] == -1 and features[bestB, 9] != -1:
+                    features[bestA, 9] = features[bestB, 9]
+                elif features[bestA, 9] != -1 and features[bestB, 9] == -1:
+                    features[bestB, 9] = features[bestA, 9]
+                else:
+                    cur = features[bestA, 9]
+                    curReplace = features[bestB, 9]
+                    for rowi in range(blocks[blocki, 0], blocks[blocki, 1]):
+                        if features[rowi, 9] == curReplace:
+                            features[rowi, 9] = cur
+    
+global _groupFeatures
+_groupFeatures = cuda.jit()(_groupFeaturesCUDA)
+
+@timeit
+def groupFeatures(features, featuresOri, rtMaxDiff, ppmMaxDiff, sampleNameMapping, rtWeight = 1, mzWeight = 0.1, blockdim = 128, griddim = 64):
+    # features: ['file', 'Num', 'RT', 'MZ', 'RtStart', 'RtEnd', 'MzStart', 'MzEnd', 'PeakArea', 'featureID', 'use']
+    
+    tic("grouping")
+    print("Grouping features")
+    sortOrd = np.squeeze(np.array(features[:,3])).argsort()
+    features = features[sortOrd, :]
+    featuresOri = featuresOri[sortOrd, :]
+    
+    blocks = np.zeros((1000, 2), dtype=np.int32) - 1
+    last = 0
+    cur = 0
+    
+    for rowi in range(1, features.shape[0]):
+        if (features[rowi, 3] - features[rowi - 1, 3]) * 1E6 / features[rowi, 3] >= 3 * ppmMaxDiff:
+            if cur >= blocks.shape[0]:
+                blocks = np.vstack((blocks, np.zeros((1000, 2), dtype=np.int32) - 1))
+            blocks[cur, 0] = last
+            blocks[cur, 1] = rowi
+            last = rowi
+            cur = cur + 1
+    if cur >= blocks.shape[0]:
+        blocks = np.vstack((blocks, np.zeros((1000, 2), dtype=np.int32) - 1))
+    blocks[cur, 0] = last
+    blocks[cur, 1] = features.shape[0]
+    cur = cur + 1
+    blocks = blocks[0:cur,:]
+    #print(blocks)
+    print("  | .. using %d blocks"%(blocks.shape[0]))
+    
+    d_features = cuda.to_device(features)
+    d_featuresOri = cuda.to_device(featuresOri)
+    d_blocks = cuda.to_device(blocks)
+    
+    _groupFeatures[griddim, blockdim](d_features, d_featuresOri, d_blocks, rtMaxDiff, ppmMaxDiff, rtWeight, mzWeight)
+    cuda.synchronize()
+    
+    features = d_features.copy_to_host()
+    #print(featuresN[:,[2,3,9]])
+    
+    d_features = None
+    d_featuresOri = None
+    d_blocks = None
+    cuda.defer_cleanup()
+    
+    print("  | .. creating feature-sample-matrix")
+    headers = ["meanRT", "meanMZ", "minRT", "maxRT", "minMZ", "maxMZ", "foundPeak"]
+    rows = []
+    for sampleNum, sampleName in sampleNameMapping.items():
+        headers.append(sampleName)
+    for fid in tqdm.tqdm(np.unique(np.array(features[:,9]))):
+        tempN = features[features[:,9] == fid,:]
+        tempO = featuresOri[features[:,9] == fid,:]
+        row = [0 for i in range(6 + len(sampleNameMapping))]
+        row[0] = np.mean(tempN[:,2])
+        row[1] = np.mean(tempN[:,3])
+        
+        minRT, maxRT, minMZ, maxMZ, foundPeak = 1E8, 0, 1E8, 0, 0
+        for sampleNum, sampleName in sampleNameMapping.items():
+            if sampleNum in tempN[:,0]:
+                row[6 + sampleNum] = tempN[tempN[:,0] == sampleNum,8][0]
+                minRT = min(minRT, tempO[tempN[:,0] == sampleNum,2][0])
+                maxRT = max(maxRT, tempO[tempN[:,0] == sampleNum,2][0])
+                minMZ = min(minMZ, tempO[tempN[:,0] == sampleNum,3][0])
+                maxMZ = max(maxMZ, tempO[tempN[:,0] == sampleNum,3][0])
+                foundPeak = foundPeak + 1
+        
+        row[2] = minRT
+        row[3] = maxRT
+        row[4] = minMZ
+        row[5] = maxMZ
+        row[6] = foundPeak
+                
+        rows.append(row)
+    
+    print("  | .. grouped to %d features"%(len(rows)))
+    print("  | .. took %.1f seconds"%(toc("grouping")))
+    print("")
+    
+    return headers, rows
+    
+    
+    
+    

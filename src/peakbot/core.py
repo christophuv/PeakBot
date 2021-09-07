@@ -210,3 +210,13 @@ def readTSVFile(file, header = True, delimiter = "\t", commentChar = "#", getRow
         rows = temp
 
     return headers, rows
+
+
+def writeTSVFile(file, headers, rows, delimiter = "\t", commentChar = "#"):
+    with open(file, "w") as fOut:
+        fOut.write(delimiter.join([str(i) for i in headers]))
+        fOut.write("\n")
+        for row in rows:
+            fOut.write(delimiter.join([str(i) for i in row]))
+            fOut.write("\n")
+    

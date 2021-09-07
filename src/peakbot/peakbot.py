@@ -1,6 +1,6 @@
 import logging
 
-from .core import tic, toc, tocP, tocAddStat, addFunctionRuntime, timeit, printRunTimesSummary
+from .core import tic, toc, tocP, tocAddStat, addFunctionRuntime, timeit, printRunTimesSummary, writeTSVFile
 
 import math
 import os
@@ -688,9 +688,9 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
     tic("detecting with peakbot")
 
     peaks = []
-    backgrounds = 0
-    walls = 0
-    errors = 0
+    backgrounds = []
+    walls = []
+    errors = []
 
     peaksDone = 0
     debugPrinted = 0
@@ -710,13 +710,11 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
     with tqdm.tqdm(total = l["LCHRMSArea"].shape[0] * len(allFiles), desc="  | .. detecting chromatographic peaks", unit="instances", disable=not verbose) as pbar:
 
         for fi in os.listdir(pathFrom):
-            l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))
+            l = pickle.load(open(os.path.join(pathFrom, fi), "rb"))  ## ['LCHRMSArea', 'areaRTs', 'areaMZs', 'gdProps'])
 
             lcmsArea = l["LCHRMSArea"]
-            for j in range(lcmsArea.shape[0]):
-                m = np.max(lcmsArea[j,:,:])
-                if m > 0:
-                    lcmsArea[j,:,:] = lcmsArea[j,:,:] / m
+            assert all(np.amax(lcmsArea, (1,2)) <= 1), "LCHRMSarea is not scaled to a maximum of 1 '%s'"%(str(np.amax(lcmsArea, (1,2))))
+            lmProps = l["gdProps"]
 
             pred = model.predict(lcmsArea)
             peaksDone += lcmsArea.shape[0]
@@ -755,24 +753,24 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
                             peaks.append([prt, pmz, prtstart, prtend, pmzstart, pmzend, 0, 1])
 
                     except Exception:
-                        errors += 1
+                        errors.append(lmProps[j,0:2])
 
                 elif ptyp == 4:
-                    walls += 1
+                    walls.append(lmProps[j,0:2])
                 elif ptyp == 5:
-                    backgrounds += 1
+                    backgrounds.append(lmProps[j,0:2])
                 else:
-                    errors += 1
+                    errors.append(lmProps[j,0:2])
 
         pbar.update(l["LCHRMSArea"].shape[0])
 
     if verbose:
         print("  | .. %d local maxima analyzed"%(peaksDone))
-        print("  | .. of these %7d (%5.1f%%) are chromatographic peaks"%(len(peaks) , 100 * len(peaks)  / peaksDone))
-        print("  | .. of these %7d (%5.1f%%) are backgrounds          "%(backgrounds, 100 * backgrounds / peaksDone))
-        print("  | .. of these %7d (%5.1f%%) are walls                "%(walls      , 100 * walls       / peaksDone))
-        if errors>0:
-            print("  | .. encountered %d errors"%(errors))
+        print("  | .. of these %7d (%5.1f%%) are chromatographic peaks"%(len(peaks)      , 100 * len(peaks)       / peaksDone))
+        print("  | .. of these %7d (%5.1f%%) are backgrounds          "%(len(backgrounds), 100 * len(backgrounds) / peaksDone))
+        print("  | .. of these %7d (%5.1f%%) are walls                "%(len(walls)      , 100 * len(walls)       / peaksDone))
+        if len(errors) > 0:
+            print("  | .. encountered %d errors"%(len(errors)))
         print("  | .. took %.1f seconds"%(toc("detecting with peakbot")))
         print("")
 
@@ -803,6 +801,36 @@ def exportPeakBotResultsFeatureML(peaks, fileTo):
             fout.write('    <pt x="%f" y="%f" />\n'%(rtstart , mzend  ))
             fout.write('    <pt x="%f" y="%f" />\n'%(rtend   , mzend  ))
             fout.write('    <pt x="%f" y="%f" />\n'%(rtend   , mzstart))
+            fout.write('  </convexhull>\n')
+            fout.write('</feature>\n')
+
+        fout.write('    </featureList>\n')
+        fout.write('  </featureMap>\n')
+@timeit
+def exportPeakBotWallsFeatureML(walls, fileTo):
+    with open(fileTo, "w") as fout:
+        fout.write('<?xml version="1.0" encoding="ISO-8859-1"?>\n')
+        fout.write('  <featureMap version="1.4" id="fm_16311276685788915066" xsi:noNamespaceSchemaLocation="http://open-ms.sourceforge.net/schemas/FeatureXML_1_4.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n')
+        fout.write('    <dataProcessing completion_time="%s">\n'%datetime.datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
+        fout.write('      <software name="PeakBot" version="4.6" />\n')
+        fout.write('    </dataProcessing>\n')
+        fout.write('    <featureList count="%d">\n'%len(walls))
+
+        for j, p in enumerate(walls):
+            rt, mz = p[0], p[1]
+            fout.write('<feature id="%s">\n'%j)
+            fout.write('  <position dim="0">%f</position>\n'%rt)
+            fout.write('  <position dim="1">%f</position>\n'%mz)
+            fout.write('  <intensity>%f</intensity>\n'%0)
+            fout.write('  <quality dim="0">0</quality>\n')
+            fout.write('  <quality dim="1">0</quality>\n')
+            fout.write('  <overallquality>0</overallquality>\n')
+            #fout.write('  <charge>1</charge>\n')
+            fout.write('  <convexhull nr="0">\n')
+            fout.write('    <pt x="%f" y="%f" />\n'%(rt, mz))
+            fout.write('    <pt x="%f" y="%f" />\n'%(rt, mz))
+            fout.write('    <pt x="%f" y="%f" />\n'%(rt, mz))
+            fout.write('    <pt x="%f" y="%f" />\n'%(rt, mz))
             fout.write('  </convexhull>\n')
             fout.write('</feature>\n')
 
@@ -1013,6 +1041,51 @@ def exportAreasAsFigures(pathFrom, toFolder, model = None, maxExport = 1E9, thre
 
 
 
+            
+            
+            
+            
+            
+            
+            
+
+
+@timeit
+def exportGroupedFeaturesAsFeatureML(headers, features, fileTo):
+    with open(fileTo, "w") as fout:
+        fout.write('<?xml version="1.0" encoding="ISO-8859-1"?>\n')
+        fout.write('  <featureMap version="1.4" id="fm_16311276685788915066" xsi:noNamespaceSchemaLocation="http://open-ms.sourceforge.net/schemas/FeatureXML_1_4.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n')
+        fout.write('    <dataProcessing completion_time="%s">\n'%datetime.datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
+        fout.write('      <software name="PeakBot" version="4.6" />\n')
+        fout.write('    </dataProcessing>\n')
+        fout.write('    <featureList count="%d">\n'%len(features))
+        
+        
+        for j, feature in enumerate(features):
+            rt, mz, rtstart, rtend, mzstart, mzend = feature[0:6]
+            inte = 1
+            fout.write('<feature id="%s">\n'%j)
+            fout.write('  <position dim="0">%f</position>\n'%rt)
+            fout.write('  <position dim="1">%f</position>\n'%mz)
+            fout.write('  <intensity>%f</intensity>\n'%inte)
+            fout.write('  <quality dim="0">0</quality>\n')
+            fout.write('  <quality dim="1">0</quality>\n')
+            fout.write('  <overallquality>0</overallquality>\n')
+            #fout.write('  <charge>1</charge>\n')
+            fout.write('  <convexhull nr="0">\n')
+            fout.write('    <pt x="%f" y="%f" />\n'%(rtstart , mzstart))
+            fout.write('    <pt x="%f" y="%f" />\n'%(rtstart , mzend  ))
+            fout.write('    <pt x="%f" y="%f" />\n'%(rtend   , mzend  ))
+            fout.write('    <pt x="%f" y="%f" />\n'%(rtend   , mzstart))
+            fout.write('  </convexhull>\n')
+            fout.write('</feature>\n')
+
+        fout.write('    </featureList>\n')
+        fout.write('  </featureMap>\n')
+
+@timeit
+def exportGroupedFeaturesAsTSV(headers, features, toFile):
+    writeTSVFile(toFile, headers, features)
 
 
 
