@@ -20,8 +20,10 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                           updateToLocalPeakProperties = False,
                           RTpeakWidth = None, minApexBorderRatio = 4, minIntensity = None,
                           maxRTOffset = 5, maxMZOffset = 10,
+                          SavitzkyGolayWindowPlusMinus = 5, 
 
                           maxPopulation = 5, intensityScales = 10, randomnessFactor = 0.1,
+                          overlapMinIOU = 0.1, overlapMaxIOU = 0.33, overlapRemain = 0.50,
                           instancePrefix = None,
                           blockdim = 32, griddim = 64,
                           verbose = True):
@@ -51,7 +53,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         print("  | .. instance prefix: '%s'"%(instancePrefix))
         print("  |")
 
-    peakbot.cuda.initializeCUDAFunctions()
+    peakbot.cuda.initializeCUDAFunctions(SavitzkyGolayWindowPlusMinus = SavitzkyGolayWindowPlusMinus)
     cuda.synchronize()
 
     tic("sampleGeneratingTrainingDataset")
@@ -66,8 +68,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
             lLen = cuda.gridsize(1)
 
             for peakRefInd in range(peaksRef.shape[0]):
-                bestMatchInd = -1
-                bestMatchDiff = -1
                 for peakFileInd in range(lInd, peaksFile.shape[0], lLen):
                     if peaksFile[peakFileInd, 7] >= 1:
                         rtdiff = abs(peaksRef[peakRefInd, 0] - peaksFile[peakFileInd, 2])
@@ -213,7 +213,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         d_rPeaks = None; d_fPeaks = None; d_rWalls = None;
         cuda.defer_cleanup()
 
-    def _resetVars(instances, areaRTs, areaMZs, peakTypes, centers, boxes, properties):
+    def _resetVars(instances, areaRTs, areaMZs, peakTypes, centers, boxes):
 
         lInd = cuda.grid(1)
         lLen = cuda.gridsize(1)
@@ -231,9 +231,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                 centers[x,y] = 0
             for y in range(boxes.shape[1]):
                 boxes[x,y] = 0
-            for y in range(properties.shape[1]):
-                for z in range(properties.shape[2]):
-                    properties[x,y,z] = 0
     resetVars = cuda.jit()(_resetVars)
 
     def _iou(boxAxs, boxAxe, boxAys, boxAye, boxBxs, boxBxe, boxBys, boxBye):
@@ -241,6 +238,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         intxe = min(boxAxe, boxBxe)
         intys = max(boxAys, boxBys)
         intye = min(boxAye, boxBye)
+
+        if intxs > intxe or intys > intye:
+            return 0
 
         inter = (intxe - intxs) * (intye - intys)
 
@@ -281,8 +281,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
         return rightNot
     _rightNot_kernel = cuda.jit(device=True)(_rightNot)
-
-
 
     def _getAsymmetricEllipse(mat, instanceInd, xcInd, ycInd, leftWidth, rightWidth, heightUp, heightDown):
         a = math.sqrt(math.pow(leftWidth,2) + math.pow(heightUp,2))
@@ -329,7 +327,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     ##
     ## Note: walls and backgrounds can be very large, rt center will be picked randomly
     ## Note: actual mz deviation of peaks will be randomized but is at least mzLowerBorder and mzUpperBorder
-    def _generateTestExamples(rng_states, mzs, ints, times, peaksCount, peaks, walls, backgrounds, instances, properties, areaRTs, areaMZs, peakTypes, centers, boxes, maxPopulation, intensityScales, randomnessFactor):
+    def _generateTestExamples(rng_states, mzs, ints, times, peaksCount, peaks, walls, backgrounds, instances, areaRTs, areaMZs, peakTypes, centers, boxes, maxPopulation, intensityScales, randomnessFactor, overlapMinIOU, overlapMaxIOU, overlapRemain):
         supports = cuda.local.array(shape = mzSlices, dtype=numba.float32)
         dsupports = cuda.local.array(shape = mzSlices, dtype=numba.float32)
         areaTimes = cuda.local.array(shape = rtSlices, dtype=numba.float32)
@@ -337,14 +335,14 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         temp = cuda.local.array(shape = (1, rtSlices, mzSlices), dtype=numba.float32)
 
         ## Classes of training instances
-        ## Main classes
+        ## Main classes 0.. single isomer, 1.. isomer with left and right overlapping elutions, 2.. isomer with left overlapping elution, 3.. isomer with right overlapping elution, 4.. wall, 5.. background
         rClass = cuda.local.array(shape = (8), dtype=numba.float32)
         rClass[0] = 0; rClass[1] = 1; rClass[2] = 2; rClass[3] = 3;
-        rClass[4] = 4; rClass[5] = 1; rClass[6] = 1; rClass[7] = 5;
+        rClass[4] = 4; rClass[5] = 1; rClass[6] = 1; rClass[7] = 4;
         ## Distraction classes
-        dClass = cuda.local.array(shape = (5), dtype=numba.float32)
-        dClass[0] = 0; dClass[1] = 0; dClass[2] = 0; dClass[3] = 4;
-        dClass[4] = 5;
+        dClass = cuda.local.array(shape = (4), dtype=numba.float32)
+        dClass[0] = 0; dClass[1] = 0; dClass[2] = 4; dClass[3] = 4;
+        #dClass[4] = 5;
 
         lInd = cuda.grid(1)
         lLen = cuda.gridsize(1)
@@ -541,7 +539,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
                 ## Add isomeric compounds if the center peak is a chromatographic peak
                 if populationInd == 0 and typR <= 3:
-                    minIOU, maxIOU, remain = 0.00, 0.33, 0.50
 
                     ## add isomeric peak on the left side
                     if typR == 1 or typR == 2:
@@ -557,13 +554,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             mzHigh   = peaks[sind, 1] * (1 + mzDevPPM * devMult / 2 / 1E6)
                             crtDiff  = peaks[ind,0] - peaks[sind,0]
 
-                            if peaks[sind,0]+crtDiff-rtOffset < peaks[ind,0] and peaks[sind,3]+crtDiff-rtOffset > peaks[ind,2] and\
-                                minIOU <= _iou_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1,
-                                                      peaks[ind,2], peaks[ind,3], 0, 1) <= maxIOU and \
-                                _leftNot_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1,
-                                                peaks[ind,2], peaks[ind,3], 0, 1) >= remain and \
-                                _rightNot_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1,
-                                                 peaks[ind,2], peaks[ind,3], 0, 1) >= remain:
+                            if overlapMinIOU <= _iou_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1, peaks[ind,2], peaks[ind,3], 0, 1) <= overlapMaxIOU and \
+                                _leftNot_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1, peaks[ind,2], peaks[ind,3], 0, 1) >= overlapRemain and \
+                                _rightNot_kernel(peaks[sind,2]+crtDiff-rtOffset, peaks[sind,3]+crtDiff-rtOffset, 0, 1, peaks[ind,2], peaks[ind,3], 0, 1) >= overlapRemain:
 
                                     ## calculate supports for the addition
                                     for t in range(mzSlices):
@@ -620,13 +613,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                             mzHigh   = peaks[sind, 1] * (1 + mzDevPPM * devMult / 2 / 1E6)
                             crtDiff  = peaks[ind,0] - peaks[sind,0]
 
-                            if peaks[sind,0]+crtDiff+rtOffset > peaks[ind,0] and peaks[sind,2]+crtDiff+rtOffset < peaks[ind,3] and \
-                                minIOU <= _iou_kernel(peaks[ind,2], peaks[ind,3], 0, 1,
-                                                      peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) <= maxIOU and \
-                                _rightNot_kernel(peaks[ind,2], peaks[ind,3], 0, 1,
-                                                 peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) >= remain and \
-                                _leftNot_kernel(peaks[ind,2], peaks[ind,3], 0, 1,
-                                                peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) >= remain:
+                            if overlapMinIOU <= _iou_kernel(peaks[ind,2], peaks[ind,3], 0, 1, peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) <= overlapMaxIOU and \
+                                _rightNot_kernel(peaks[ind,2], peaks[ind,3], 0, 1, peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) >= overlapRemain and \
+                                _leftNot_kernel(peaks[ind,2], peaks[ind,3], 0, 1, peaks[sind,2]+crtDiff+rtOffset, peaks[sind,3]+crtDiff+rtOffset, 0, 1) >= overlapRemain:
 
                                     ## calculate supports for the addition
                                     for t in range(mzSlices):
@@ -731,8 +720,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     peakTypes   = np.zeros((genSamples, peakbot.Config.NUMCLASSES), np.float32)
     centers     = np.zeros((genSamples, 2), np.float32)
     boxes       = np.zeros((genSamples, 4), np.float32)
-    properties  = np.zeros((genSamples, maxPopulation, 10), np.float32)
-    description = ["" for i in range(genSamples)]
 
     ## gpu memory instances
     d_instances      = cuda.to_device(instances)
@@ -741,12 +728,11 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     d_peakTypes      = cuda.to_device(peakTypes)
     d_centers        = cuda.to_device(centers)
     d_boxes          = cuda.to_device(boxes)
-    d_properties     = cuda.to_device(properties)
 
     if verbose:
         print("  | Generating %d examples in %d batches on the GPU"%(nTestExamples, math.ceil(nTestExamples/batchSize)))
         print("  | .. with the current values of blockdim (%d) and griddim (%d) %d samples will be generated on the GPU"%(blockdim, griddim, genSamples))
-        print("  | .. size of the necessary objects is %5.1f Mb (and some more local memory is required by the kernels)"%((instances.nbytes+areaRTs.nbytes+areaMZs.nbytes+peakTypes.nbytes+centers.nbytes+boxes.nbytes+properties.nbytes)/1E6))
+        print("  | .. size of the necessary objects is %5.1f Mb (and some more local memory is required by the kernels)"%((instances.nbytes+areaRTs.nbytes+areaMZs.nbytes+peakTypes.nbytes+centers.nbytes+boxes.nbytes)/1E6))
         print("  | .. some more instances than specified by the parameters will be generated. Rounding (ceiling) causes this.")
         print("  | .. Attention: On some operating systems (e.g., Windows 10) the operating system might be unresponsive for several seconds.")
         print("  | ..            This is normal behaviour since priority is put on the GPU calculations rather than an update of the operating system.")
@@ -762,8 +748,8 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     genClasses = [0,0,0,0,0,0]
     with tqdm.tqdm(total = nTestExamples, desc="  | .. current", unit="instances", smoothing=0, disable=not verbose) as pbar:
         ## generate ahead to support overlapping kernel execution and pickle file dumping
-        resetVars[griddim, blockdim](d_instances, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, d_properties)
-        generateTestExamples[griddim, blockdim](rng_states, d_mzs, d_ints, d_times, d_peaksCount, d_peaks, d_walls, d_backgrounds, d_instances, d_properties, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, maxPopulation, intensityScales, randomnessFactor)
+        resetVars[griddim, blockdim](d_instances, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes)
+        generateTestExamples[griddim, blockdim](rng_states, d_mzs, d_ints, d_times, d_peaksCount, d_peaks, d_walls, d_backgrounds, d_instances, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, maxPopulation, intensityScales, randomnessFactor, overlapMinIOU, overlapMaxIOU, overlapRemain)
         genTestExamples = 0
 
         while genTestExamples < nTestExamples:
@@ -772,19 +758,17 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
             instances  = d_instances.copy_to_host() ;
             areaRTs    = d_areaRTs.copy_to_host()   ; areaMZs = d_areaMZs.copy_to_host();
             peakTypes  = d_peakTypes.copy_to_host() ; centers = d_centers.copy_to_host(); boxes = d_boxes.copy_to_host();
-            properties = d_properties.copy_to_host();
 
-            resetVars[griddim, blockdim](d_instances,  d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, d_properties)
-            generateTestExamples[griddim, blockdim](rng_states, d_mzs, d_ints, d_times, d_peaksCount, d_peaks, d_walls, d_backgrounds, d_instances, d_properties, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, maxPopulation, intensityScales, randomnessFactor)
+            resetVars[griddim, blockdim](d_instances,  d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes)
+            generateTestExamples[griddim, blockdim](rng_states, d_mzs, d_ints, d_times, d_peaksCount, d_peaks, d_walls, d_backgrounds, d_instances, d_areaRTs, d_areaMZs, d_peakTypes, d_centers, d_boxes, maxPopulation, intensityScales, randomnessFactor, overlapMinIOU, overlapMaxIOU, overlapRemain)
 
             use = np.logical_and(np.sum(peakTypes, (1)) == 1, np.amax(instances, (1,2)) == 1)
             instances = instances[use,:,:]
-            areaRTs = areaRTs[use, :]
-            areaMZs = areaMZs[use, :]
+            areaRTs   = areaRTs[use, :]
+            areaMZs   = areaMZs[use, :]
             peakTypes = peakTypes[use, :]
-            centers = centers[use, :]
-            boxes = boxes[use, :]
-            properties = properties[use, :, :]
+            centers   = centers[use, :]
+            boxes     = boxes[use, :]
 
             assert all(np.amax(instances, (1,2)) <= 1), "LCHRMSarea is not scaled to a maximum of 1 '%s'"%(str(np.amax(instances, (1,2))))
 
@@ -812,7 +796,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
     cuda.synchronize()
 
     d_mzs = None; d_ints = None; d_times = None; d_peaksCount = None; d_peaks = None;
-    d_walls = None; d_backgrounds = None; d_instances = None; d_properties = None;
+    d_walls = None; d_backgrounds = None; d_instances = None; 
     d_areaRTs = None; d_areaMZs = None; d_peakTypes = None; d_centers = None; d_boxes = None;
     cuda.defer_cleanup()
 

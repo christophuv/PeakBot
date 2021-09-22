@@ -52,8 +52,6 @@ class Chromatogram():
 
         s = np.diff(times)
 
-
-
         if verbose:
             print(verbosePrefix, "  | .. there are %d scans in the file"%(len(self.MS1_list)), sep="")
             print(verbosePrefix, "  | .. there are %d peaks in the file"%(peaksTotal), sep="")
@@ -528,10 +526,16 @@ class Chromatogram():
                 curScan=self.MS2_list[-1]
 
             s = self.decode_spectrum(curScan.encodedData, curScan.peak_count, compression=curScan.compression)
-            s = s[:,s[1,:] > self.intensityCutoff]
+            if self.msLevel==1:
+                try:
+                    if s.shape[0] > 0:
+                        s = s[:,s[1,:] > self.intensityCutoff]
+                except:
+                    s = np.zeros((0,2))
+            
             curScan.mz_list=s[:,0]
             curScan.intensity_list=s[:,1]
-            curScan.peak_count=s.shape[1]
+            curScan.peak_count=s.shape[0]
             curScan.encodedData=None
 
 

@@ -1,16 +1,15 @@
 import logging
 
-from .core import tic, toc, tocP, tocAddStat, addFunctionRuntime, timeit, printRunTimesSummary, writeTSVFile
+from .core import tic, toc, tocAddStat, timeit, writeTSVFile
 
-import math
 import os
 import datetime
 import pickle
-import multiprocessing
 import uuid
 
 import tensorflow as tf
 import numpy as np
+import numba
 import scipy
 import pandas as pd
 import plotnine as p9
@@ -762,7 +761,7 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
                 else:
                     errors.append(lmProps[j,0:2])
 
-        pbar.update(l["LCHRMSArea"].shape[0])
+            pbar.update(l["LCHRMSArea"].shape[0])
 
     if verbose:
         print("  | .. %d local maxima analyzed"%(peaksDone))
@@ -1142,11 +1141,11 @@ def exportLocalMaximaAsFeatureML(foutFile, peaks):
 @timeit
 def exportLocalMaximaAsTSV(foutFile, peaks):
     with open(foutFile, "w") as fout:
-        fout.write("\t".join(["Num", "RT", "MZ", "RtStart", "RtEnd", "MzStart", "MzEnd"]))
+        fout.write("\t".join(["Num", "RT", "MZ", "RtStart", "RtEnd", "MzDeviation"]))
         fout.write("\n")
 
         for j in range(peaks.shape[0]):
-            fout.write("\t".join((str(s) for s in [j, peaks[j,2], peaks[j,3], peaks[j,8], peaks[j,11], peaks[j, 3]*(1.-peaks[j,5]/6/1.E6), peaks[j, 3]*(1.+peaks[j,5]/6/1.E6)])))
+            fout.write("\t".join((str(s) for s in [j, peaks[j,2], peaks[j,3], peaks[j,8], peaks[j,11], peaks[j,5]])))
             fout.write("\n")
 def showSummaryPlots(peaks, maximaProps, maximaPropsAll, polarity, highlights = None):
     tic()
@@ -1301,3 +1300,133 @@ def estimateParameters(chrom, to):
     
     return suggestedIntraScanPPM
     
+
+
+
+
+
+
+
+
+@numba.jit(nopython=True, parallel=True)
+def _expMSMSExcList(temp, peaks, ppm, rtAdd):
+    for ti in numba.prange(temp.shape[0]):
+        useAsExclusion = True
+        useAsWallExclusion = True
+        for pi in range(peaks.shape[0]):
+            if abs(temp[ti, 1]-peaks[pi, 1])*1E6/peaks[pi, 1] <= ppm:
+                useAsWallExclusion = False
+                if peaks[pi, 2]-rtAdd <= temp[ti, 0] <= peaks[pi, 3]+rtAdd:
+                    useAsExclusion = False
+                
+        temp[ti, 2] = useAsExclusion
+        temp[ti, 4] = temp[ti, 0] - rtAdd
+        temp[ti, 5] = temp[ti, 0] + rtAdd
+        temp[ti, 3] = useAsWallExclusion
+
+@numba.jit(nopython=True)
+def _expMSMSExcList2(temp, peaks, ppm, rtAdd, rtStart, rtEnd):
+    for ti in range(temp.shape[0]):
+        if temp[ti,3] != 0:
+            for pi in range(temp.shape[0]):
+                if temp[pi,3]!=0 and abs(temp[ti, 1]-temp[pi, 1])*1E6/temp[pi, 1] <= ppm:
+                    temp[pi,3] = 0
+@numba.jit(nopython=True)
+def _expMSMSExcList3(temp, peaks, ppm, rtAdd, rtStart, rtEnd):
+    for ti in range(temp.shape[0]):
+        if temp[ti,2] != 0:
+            for pi in range(temp.shape[0]):
+                if ti!=pi and temp[pi,2]!=0 and abs(temp[ti, 1]-temp[pi, 1])*1E6/temp[pi, 1] <= ppm:
+                    if temp[ti,4] <= temp[pi,4] and temp[pi,5] <= temp[ti,5]:
+                        temp[pi,2] = 0
+                    elif temp[ti,4] <= temp[pi,4] <= temp[ti,5] <= temp[pi,5]:
+                        temp[pi,2] = 0
+                        temp[ti,5] = temp[pi, 5]
+                    elif temp[pi, 4] <= temp[ti,4] <= temp[pi,5] <= temp[ti,5]:
+                        temp[pi,2] = 0
+                        temp[ti, 4] = temp[pi, 4]
+
+def exportMSMSExclusionList(walls, backgrounds, peaks, fileTo, ppm = 5., rtAdd = 30., rtStart=100, rtEnd=2400, verbose = True):
+    tic("startMSMSExcListFunction")
+    if verbose: 
+        print("Generating MSMS exclusion list")
+
+    temp = np.zeros((len(walls)+len(backgrounds), 6))  ## rt, mz, uselocal, useGlobal, startrt, endrt
+    cur = 0
+    for i in walls:
+        temp[cur,0] = i[0]
+        temp[cur,1] = i[1]
+        cur = cur + 1
+    for i in backgrounds:
+        temp[cur,0] = i[0]
+        temp[cur,1] = i[1]
+        cur = cur + 1
+
+    peaks = np.array(peaks)
+    _expMSMSExcList(temp, peaks, ppm, rtAdd)
+    temp = temp[np.logical_or(temp[:,2]!=0, temp[:,3]!=0),:]
+    print("There are %d exclustions"%temp.shape[0])
+    _expMSMSExcList2(temp, peaks, ppm, rtAdd, rtStart, rtEnd)
+    temp = temp[np.logical_or(temp[:,2]!=0, temp[:,3]!=0),:]
+    print("There are %d exclustions"%temp.shape[0])
+
+    
+    for i in range(3):
+        if verbose: print("  | .. iteration %d"%i)
+        _expMSMSExcList3(temp, peaks, ppm, rtAdd, rtStart, rtEnd)
+        temp = temp[np.logical_or(temp[:,2]!=0, temp[:,3]!=0),:]
+        print("There are %d exclustions"%temp.shape[0])
+    
+    temp = temp[(temp[:,5]-temp[:,4])>180,:]
+
+    ex = 0
+    with open(fileTo, "w") as fout:
+        fout.write("MZ\tRTStart\tRTEnd\n")
+        for ti in range(temp.shape[0]):
+            if temp[ti, 3] != 0:
+                fout.write("%f\t%f\t%f\n"%(temp[ti, 1], rtStart, rtEnd))
+            else:
+                fout.write("%f\t%f\t%f\n"%(temp[ti, 1], temp[ti, 4], temp[ti, 5]))
+            ex = ex + 1
+
+    with open(fileTo+".featureML", "w") as fout:
+        fout.write('<?xml version="1.0" encoding="ISO-8859-1"?>\n')
+        fout.write('  <featureMap version="1.4" id="fm_16311276685788915066" xsi:noNamespaceSchemaLocation="http://open-ms.sourceforge.net/schemas/FeatureXML_1_4.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n')
+        fout.write('    <dataProcessing completion_time="%s">\n'%datetime.datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
+        fout.write('      <software name="PeakBot" version="4.5" />\n')
+        fout.write('    </dataProcessing>\n')
+        fout.write('    <featureList count="%d">\n'%(ex))
+
+        for ti in range(temp.shape[0]):
+            rt = temp[ti,0]
+            mz = temp[ti,1]
+            fout.write('<feature id="%s">\n'%ti)
+            fout.write('  <position dim="0">%f</position>\n'%rt)
+            fout.write('  <position dim="1">%f</position>\n'%mz)
+            fout.write('  <intensity>%f</intensity>\n'%0)
+            fout.write('  <quality dim="0">0</quality>\n')
+            fout.write('  <quality dim="1">0</quality>\n')
+            fout.write('  <overallquality>0</overallquality>\n')
+            fout.write('  <charge>1</charge>\n')
+            fout.write('  <convexhull nr="0">\n')
+            if temp[ti, 3] != 0:
+                fout.write('    <pt x="%f" y="%f" />\n'%(rtStart, mz*(1.-ppm/1.E6)))
+                fout.write('    <pt x="%f" y="%f" />\n'%(rtStart, mz*(1.+ppm/1.E6)))
+                fout.write('    <pt x="%f" y="%f" />\n'%(rtEnd, mz*(1.+ppm/1.E6)))
+                fout.write('    <pt x="%f" y="%f" />\n'%(rtEnd, mz*(1.-ppm/1.E6)))
+            else:
+                fout.write('    <pt x="%f" y="%f" />\n'%(temp[ti, 4], mz*(1.-ppm/1.E6)))
+                fout.write('    <pt x="%f" y="%f" />\n'%(temp[ti, 4], mz*(1.+ppm/1.E6)))
+                fout.write('    <pt x="%f" y="%f" />\n'%(temp[ti, 5], mz*(1.+ppm/1.E6)))
+                fout.write('    <pt x="%f" y="%f" />\n'%(temp[ti, 5], mz*(1.-ppm/1.E6)))
+            fout.write('  </convexhull>\n')
+            fout.write('</feature>\n')
+
+        fout.write('    </featureList>\n')
+        fout.write('  </featureMap>\n')
+    
+    if verbose: print("  | .. took %.1f seconds"%(toc("startMSMSExcListFunction")))
+    
+
+    
+            

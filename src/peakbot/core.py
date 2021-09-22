@@ -85,6 +85,9 @@ class TabLog(metaclass = Singleton):
         if key not in self.keyOrder:
             self.keyOrder.append(key)
         self.data[instance][key] = value
+    
+    def addSeparator(self):
+        self.instanceOrder.append("-!$& separator")
 
     def print(self):
         widths = {}
@@ -98,24 +101,33 @@ class TabLog(metaclass = Singleton):
                 if i in self.data.keys() and k in self.data[i].keys():
                     le = max(le, len(str(self.data[i][k])))
             widths[k] = le
-
+        
+        print("%s  "%(" "*len(str(len(self.instanceOrder)))), end="")
         print("%%-%ds |"%leI%"Instance", end="")
         for k in self.keyOrder:
             print(" %%%ds |"%widths[k]%k, end="")
         print("")
 
+        print("%s--"%("-"*len(str(len(self.instanceOrder)))), end="")
         print("%s-+"%("-"*leI), end="")
         for k in self.keyOrder:
             print("-%s-+"%("-"*widths[k]), end="")
         print("")
 
-        for i in self.instanceOrder:
-            print("%%-%ds | "%leI%i, end="")
-            for k in self.keyOrder:
-                if i in self.data.keys() and k in self.data[i].keys():
-                    print("%%%ds | "%widths[k]%self.data[i][k], end="")
-                else:
-                    print("%%%ds | "%widths[k]%"", end="")
+        for ind, i in enumerate(self.instanceOrder):
+            if i == "-!$& separator":
+                print("%s--"%("-"*len(str(len(self.instanceOrder)))), end="")
+                print("%s-+"%("-"*leI), end="")
+                for k in self.keyOrder:
+                    print("-%s-+"%("-"*widths[k]), end="")
+            else:
+                print("%%%ds. "%len(str(len(self.instanceOrder)))%ind, end="")
+                print("%%-%ds | "%leI%i, end="")
+                for k in self.keyOrder:
+                    if i in self.data.keys() and k in self.data[i].keys():
+                        print("%%%ds | "%widths[k]%self.data[i][k], end="")
+                    else:
+                        print("%%%ds | "%widths[k]%"", end="")
             print("")
 
     def reset(self):
@@ -129,18 +141,6 @@ class TabLog(metaclass = Singleton):
             tW.writerow(["Instance"]+self.keyOrder)
             for ins in self.instanceOrder:
                 tW.writerow([ins]+[self.data[ins][key] if key in self.data[ins].keys() else "" for key in self.keyOrder])
-
-
-if False:
-    a = TabLog()
-    a.addData("TestInstance", "something", 5)
-    a.addData("TestInstance", "cool", 5)
-    a.addData("TestInstance2", "cool", 500000)
-    TabLog().addData("test", "blabla", 333)
-
-    b = TabLog()
-    b.print()
-
 
 
 
