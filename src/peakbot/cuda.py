@@ -1166,14 +1166,14 @@ def groupFeatures(features, featuresOri, rtMaxDiff, ppmMaxDiff, sampleNameMappin
     for fid in tqdm.tqdm(np.unique(np.array(features[:,9]))):
         tempN = features[features[:,9] == fid,:]
         tempO = featuresOri[features[:,9] == fid,:]
-        row = [0 for i in range(6 + len(sampleNameMapping))]
+        row = [0 for i in range(7 + len(sampleNameMapping))]
         row[0] = np.mean(tempN[:,2])
         row[1] = np.mean(tempN[:,3])
         
         minRT, maxRT, minMZ, maxMZ, foundPeak = 1E8, 0, 1E8, 0, 0
         for sampleNum, sampleName in sampleNameMapping.items():
             if sampleNum in tempN[:,0]:
-                row[6 + sampleNum] = tempN[tempN[:,0] == sampleNum,8][0]
+                row[7 + sampleNum] = tempN[tempN[:,0] == sampleNum,8][0]
                 minRT = min(minRT, tempO[tempN[:,0] == sampleNum,2][0])
                 maxRT = max(maxRT, tempO[tempN[:,0] == sampleNum,2][0])
                 minMZ = min(minMZ, tempO[tempN[:,0] == sampleNum,3][0])
