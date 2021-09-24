@@ -439,75 +439,45 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
                     ## Peak
                     if typR <= 3:
-                        tries = 40
-                        ok = False
-                        while tries > 0 and not ok:
-                            tries    = tries - 1
-                            sind     = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(peaks.shape[0]-1))
-                            rtOffset = meanDifferenceScans * rtSlices/2 * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1)
-                            centerRT = peaks[sind, 0] + rtOffset
-                            mzOffset = peaks[sind, 1]/1E6 * peaks[sind, 4] * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1) * 2
-                            mzDevPPM = peaks[sind, 4] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
-                            devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
-                            mzLow    = (peaks[sind, 1] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
-                            mzHigh   = (peaks[sind, 1] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
+                        sind     = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(peaks.shape[0]-1))
+                        rtOffset = meanDifferenceScans * rtSlices/2 * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1)
+                        centerRT = peaks[sind, 0] + rtOffset
+                        mzOffset = peaks[sind, 1]/1E6 * peaks[sind, 4] * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1) * 2
+                        mzDevPPM = peaks[sind, 4] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
+                        devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
+                        mzLow    = (peaks[sind, 1] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
+                        mzHigh   = (peaks[sind, 1] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
 
-                            crtDiff  = mpRT - peaks[sind, 0]
-                            cmzDiff  = mpMZ - peaks[sind, 1]
-                            centerMZ = peaks[sind, 1] + mzOffset
-
-                            if ((mzOffset > 0 and (peaks[sind, 1] + mzOffset) * (1 - mzDevPPM / 2 / 1E6)+cmzDiff > mpMZHigh) or \
-                                (mzOffset <= 0 and (peaks[sind, 1] + mzOffset) * (1 + mzDevPPM / 2 / 1E6)+cmzDiff < mpMZLow)) or \
-                               ((peaks[sind, 0] < mpRT and peaks[sind,3] < mpRTLeft) or \
-                                (peaks[sind, 0] > mpRT and mpRTRight < peaks[sind,2])):
-                                ok = True
-
-                        if not ok:
-                            continue
+                        crtDiff  = mpRT - peaks[sind, 0]
+                        cmzDiff  = mpMZ - peaks[sind, 1]
+                        centerMZ = peaks[sind, 1] + mzOffset
 
                     ## Wall
                     elif typR == 4:
-                        tries = 40
-                        ok = False
-                        while tries > 0 and not ok:
-                            tries    = tries - 1
-                            sind     = round(xoroshiro128p_uniform_float32(rng_states, lInd)*walls.shape[0])
-                            centerRT = walls[sind, 1] + (walls[sind, 2]-walls[sind, 1]) * xoroshiro128p_uniform_float32(rng_states, lInd)
-                            mzOffset = walls[sind, 0]/1E6 * walls[sind, 3] * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1) * 2
-                            mzDevPPM = walls[sind, 3] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
-                            devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
-                            mzLow    = (walls[sind, 0] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
-                            mzHigh   = (walls[sind, 0] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
+                        sind     = round(xoroshiro128p_uniform_float32(rng_states, lInd)*walls.shape[0])
+                        centerRT = walls[sind, 1] + (walls[sind, 2]-walls[sind, 1]) * xoroshiro128p_uniform_float32(rng_states, lInd)
+                        mzOffset = walls[sind, 0]/1E6 * walls[sind, 3] * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1) * 2
+                        mzDevPPM = walls[sind, 3] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
+                        devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
+                        mzLow    = (walls[sind, 0] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
+                        mzHigh   = (walls[sind, 0] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
 
-                            cmzDiff  = mpMZ - walls[sind, 0]
-                            centerMZ = walls[sind, 0] + mzOffset
-
-                            if (mzOffset  > 0 and (walls[sind, 0] + mzOffset) * (1 - mzDevPPM / 2 / 1E6)+cmzDiff > mpMZHigh) or \
-                               (mzOffset <= 0 and (walls[sind, 0] + mzOffset) * (1 + mzDevPPM / 2 / 1E6)+cmzDiff < mpMZLow):
-                                ok = True
-                        if not ok:
-                            continue
+                        cmzDiff  = mpMZ - walls[sind, 0]
+                        centerMZ = walls[sind, 0] + mzOffset
 
                     ## Background
                     elif typR == 5:
-                        tries = 40
-                        ok = False
-                        while tries > 0 and not ok:
-                            tries    = tries - 1
-                            sind     = round(xoroshiro128p_uniform_float32(rng_states, lInd)*backgrounds.shape[0])
-                            rtOffset = meanDifferenceScans * rtSlices/2 * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1)
-                            centerRT = backgrounds[sind, 0] + rtOffset
-                            mzOffset = backgrounds[sind, 1]/1E6 * backgrounds[sind, 2] * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1) * 2
-                            mzDevPPM = backgrounds[sind, 2] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
-                            devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
-                            mzLow    = (backgrounds[sind, 1] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
-                            mzHigh   = (backgrounds[sind, 1] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
+                        sind     = round(xoroshiro128p_uniform_float32(rng_states, lInd)*backgrounds.shape[0])
+                        rtOffset = meanDifferenceScans * rtSlices/2 * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1)
+                        centerRT = backgrounds[sind, 0] + rtOffset
+                        mzOffset = backgrounds[sind, 1]/1E6 * backgrounds[sind, 2] * (xoroshiro128p_uniform_float32(rng_states, lInd) * 2 - 1) * 2
+                        mzDevPPM = backgrounds[sind, 2] * (1 + xoroshiro128p_uniform_float32(rng_states, lInd) * 0.5)
+                        devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
+                        mzLow    = (backgrounds[sind, 1] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
+                        mzHigh   = (backgrounds[sind, 1] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
 
-                            cmzDiff  = mpMZ - backgrounds[sind, 1]
-                            centerMZ = backgrounds[sind, 1] + mzOffset
-                            ok = True
-                        if not ok:
-                            continue
+                        cmzDiff  = mpMZ - backgrounds[sind, 1]
+                        centerMZ = backgrounds[sind, 1] + mzOffset
 
                     ## unknown class
                     else:
@@ -746,7 +716,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         print("  | .. size of the necessary objects is %5.1f Mb (and some more local memory is required by the kernels)"%((instances.nbytes+areaRTs.nbytes+areaMZs.nbytes+peakTypes.nbytes+centers.nbytes+boxes.nbytes)/1E6))
         print("  | .. some more instances than specified by the parameters will be generated. Rounding (ceiling) causes this.")
         print("  | .. Attention: On some operating systems (e.g., Windows 10) the operating system might be unresponsive for several seconds.")
-        print("  | ..            This is normal behaviour since priority is put on the GPU calculations rather than an update of the operating system.")
+        print("  | ..            This is normal behaviour since priority is given to the GPU calculations rather than the display update of the operating system.")
         print("  | ")
     outVal = 0
     skipped = 0

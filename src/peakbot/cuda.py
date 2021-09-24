@@ -361,7 +361,10 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
         prevDer = 0
         leftOffset = 0
         run = 1
+        eicRatio = 0
         while run and leftOffset+1 < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0:
+            if eicSmoothed[a - leftOffset - 1]:
+                eicRatio = max(eicRatio, eicSmoothed[a - leftOffset - 1])
             der = eicSmoothed[a - leftOffset - 1] / eicSmoothed[a - leftOffset]
             if der > prevDer and eic[e - leftOffset - 1] > 0:
                 leftOffset = leftOffset + 1
@@ -369,12 +372,12 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
             else:
                 run = 0
         inflLeftOffset = leftOffset
-        infDer = prevDer
         run = 1
-        while run and leftOffset+1 < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0:
+        while run and leftOffset+1 < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0 and leftOffset+1 <= inflLeftOffset*4:
             ratioBA = 0
             if eicSmoothed[a] > 0:
-                ratioBA = eicSmoothed[a - leftOffset - 1] / eicSmoothed[a]#eic[e - leftOffset - 1] / eic[e]
+                ratioBA = eicSmoothed[a - leftOffset - 1] / eicSmoothed[a]
+                eicRatio = max(eicRatio, ratioBA)
             if eic[e - leftOffset - 1] > 0 and eicSmoothed[a - leftOffset - 1] < eicSmoothed[a - leftOffset] and ratioBA >= gdRTminRatio:
                 leftOffset = leftOffset + 1
             else:
@@ -385,6 +388,8 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
         rightOffset = 0
         run = 1
         while run and rightOffset+1 < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow:
+            if eicSmoothed[a + rightOffset + 1] > 0:
+                eicRatio = max(eicRatio, eicSmoothed[a + rightOffset + 1])
             der = eicSmoothed[a + rightOffset + 1] / eicSmoothed[a + rightOffset]
             if der > prevDer and eic[e + rightOffset + 1] > 0:
                 rightOffset = rightOffset + 1
@@ -392,12 +397,12 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
             else:
                 run = 0
         inflRightOffset = rightOffset
-        infDer = prevDer
         run = 1
-        while run and rightOffset+1 < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow:
+        while run and rightOffset+1 < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow and rightOffset+1 <= inflRightOffset*4:
             ratioBA = 0
             if eicSmoothed[a] > 0:
-                ratioBA = eicSmoothed[a + rightOffset + 1] / eicSmoothed[a]#eic[e + rightOffset + 1] / eic[e]
+                ratioBA = eicSmoothed[a + rightOffset + 1] / eicSmoothed[a]
+                eicRatio = max(eicRatio, ratioBA)
             if eic[e + rightOffset + 1] > 0 and eicSmoothed[a + rightOffset + 1] < eicSmoothed[a + rightOffset] and ratioBA >= gdRTminRatio:
                 rightOffset = rightOffset + 1
             else:
@@ -432,8 +437,9 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
                 else:
                     infRatioCount += 1
             testInd = testInd - 1
+        
 
-        signalProps[7] = minWidth <= peakWidth <= maxWidth and ints[scanInd, peakInd] >= minimumIntensity and (ratio >= minRatioFactor or infRatioCount > 3)
+        signalProps[7] = minWidth <= peakWidth <= maxWidth and ints[scanInd, peakInd] >= minimumIntensity and (ratio >= minRatioFactor or infRatioCount > 3) and eicRatio > 3
     global _gradientDescendRTPeak_kernel
     _gradientDescendRTPeak_kernel = cuda.jit(device=True)(_gradientDescendRTPeak)
 
@@ -1174,10 +1180,10 @@ def groupFeatures(features, featuresOri, rtMaxDiff, ppmMaxDiff, sampleNameMappin
         for sampleNum, sampleName in sampleNameMapping.items():
             if sampleNum in tempN[:,0]:
                 row[7 + sampleNum] = tempN[tempN[:,0] == sampleNum,8][0]
-                minRT = min(minRT, tempO[tempN[:,0] == sampleNum,2][0])
-                maxRT = max(maxRT, tempO[tempN[:,0] == sampleNum,2][0])
-                minMZ = min(minMZ, tempO[tempN[:,0] == sampleNum,3][0])
-                maxMZ = max(maxMZ, tempO[tempN[:,0] == sampleNum,3][0])
+                minRT = min(minRT, tempO[tempN[:,0] == sampleNum,2][0,0])
+                maxRT = max(maxRT, tempO[tempN[:,0] == sampleNum,2][0,0])
+                minMZ = min(minMZ, tempO[tempN[:,0] == sampleNum,3][0,0])
+                maxMZ = max(maxMZ, tempO[tempN[:,0] == sampleNum,3][0,0])
                 foundPeak = foundPeak + 1
         
         row[2] = minRT

@@ -339,6 +339,8 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
             if self.verbose: print("Additional test datasets (epoch %d): "%(epoch+1))
             # evaluate on the additional validation sets
             for validation_set in self.validation_sets:
+                tic("kl234hlkjsfkjh1hlkjhasfdkjlh")
+                outStr = []
                 if len(validation_set) == 2:
                     validation_data, validation_set_name = validation_set
                     validation_targets = None
@@ -359,21 +361,22 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                                               steps=self.steps)
 
                 self.maxLenNames = max(self.maxLenNames, len(validation_set_name))
-                if self.verbose: print("   %%%ds: "%self.maxLenNames%validation_set_name, end="")
 
                 file_writer = tf.summary.create_file_writer(self.logDir + "/" + validation_set_name)
                 for i, (metric, result) in enumerate(zip(self.model.metrics_names, results)):
                     valuename = "epoch_" + metric
                     with file_writer.as_default():
                         tf.summary.scalar(valuename, data=result, step=epoch)
-                    if self.verbose and i > 0: print(", ", end="")
+                    if i > 0: outStr.append(", ")
                     valuename = metric
                     if i not in self.printWidths.keys():
                         self.printWidths[i] = 0
                     self.printWidths[i] = max(self.printWidths[i], len(valuename))
-                    if self.verbose: print("%s: %.4f"%("%%%ds"%self.printWidths[i]%valuename, result), end="")
+                    outStr.append("%s: %.4f"%("%%%ds"%self.printWidths[i]%valuename, result))
                     hist[validation_set_name + "_" + valuename] = result
-                if self.verbose: print("")
+                outStr.append("")
+                outStr.insert(0, "   %%%ds: %3.0f"%(self.maxLenNames, toc("kl234hlkjsfkjh1hlkjhasfdkjlh"))%validation_set_name)
+                if self.verbose: print("".join(outStr))
             if self.verbose: print("")
         self.history.append(hist)
 

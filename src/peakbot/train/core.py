@@ -20,8 +20,7 @@ def shuffleResultsSampleNames(exportPath, instancePrefix=None,
     tic("shuffling")
     if verbose:
         print("Shuffling the test instances (batch name shuffling)")
-    files = [os.path.join(exportPath, f) for f in os.listdir(
-        exportPath) if os.path.isfile(os.path.join(exportPath, f))]
+    files = [os.path.join(exportPath, f) for f in os.listdir(exportPath) if os.path.isfile(os.path.join(exportPath, f))]
     if verbose:
         print("  | .. there are %d files" % (len(files)))
 
@@ -34,8 +33,7 @@ def shuffleResultsSampleNames(exportPath, instancePrefix=None,
         os.rename(files[i], os.path.join(pathlib.Path(
             files[i]).parent.resolve(), "%s%d.pickle" % (tempFileName, i)))
 
-    files = [os.path.join(exportPath, f) for f in os.listdir(
-        exportPath) if os.path.isfile(os.path.join(exportPath, f))]
+    files = [os.path.join(exportPath, f) for f in os.listdir(exportPath) if os.path.isfile(os.path.join(exportPath, f))]
     for i in range(len(files)):
         os.rename(files[i], files[i].replace(tempFileName, instancePrefix))
 
@@ -53,8 +51,7 @@ def shuffleResults(exportPath, steps=1E5, samplesToExchange=50,
     tic("shuffling")
     if verbose:
         print("Shuffling the test instances (inter-batch shuffling)")
-    files = [os.path.join(exportPath, f) for f in os.listdir(
-        exportPath) if os.path.isfile(os.path.join(exportPath, f))]
+    files = [os.path.join(exportPath, f) for f in os.listdir(exportPath) if os.path.isfile(os.path.join(exportPath, f))]
     if verbose:
         print("  | .. there are %d files" % (len(files)))
 
@@ -82,27 +79,26 @@ def shuffleResults(exportPath, steps=1E5, samplesToExchange=50,
             for k in a.keys():
                 if isinstance(a[k], np.ndarray) and len(a[k].shape) == 2:
                     temp = a[k][beginA:(beginA + cExchange), :]
-                    a[k][beginA:(beginA + cExchange),
-                         :] = b[k][beginB:(beginB + cExchange), :]
+                    a[k][beginA:(beginA + cExchange),:] = b[k][beginB:(beginB + cExchange), :]
                     b[k][beginB:(beginB + cExchange), :] = temp
 
                 elif isinstance(a[k], np.ndarray) and len(a[k].shape) == 3:
                     temp = a[k][beginA:(beginA + cExchange), :, :]
-                    a[k][beginA:(beginA + cExchange), :,
-                         :] = b[k][beginB:(beginB + cExchange), :, :]
+                    a[k][beginA:(beginA + cExchange), :,:] = b[k][beginB:(beginB + cExchange), :, :]
                     b[k][beginB:(beginB + cExchange), :, :] = temp
 
                 elif isinstance(a[k], np.ndarray) and len(a[k].shape) == 4:
                     temp = a[k][beginA:(beginA + cExchange), :, :, :]
-                    a[k][beginA:(beginA + cExchange), :, :,
-                         :] = b[k][beginB:(beginB + cExchange), :, :, :]
+                    a[k][beginA:(beginA + cExchange), :, :,:] = b[k][beginB:(beginB + cExchange), :, :, :]
                     b[k][beginB:(beginB + cExchange), :, :, :] = temp
 
                 elif isinstance(a[k], list):
                     temp = a[k][beginA:(beginA + cExchange)]
-                    a[k][beginA:(beginA + cExchange)
-                         ] = b[k][beginB:(beginB + cExchange)]
+                    a[k][beginA:(beginA + cExchange)] = b[k][beginB:(beginB + cExchange)]
                     b[k][beginB:(beginB + cExchange)] = temp
+                
+                else:
+                    assert False, "Unknown key in shuffling, aborting"
 
             assert samplesA == a["LCHRMSArea"].shape[0] and samplesB == b["LCHRMSArea"].shape[0]
 
