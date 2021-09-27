@@ -334,7 +334,7 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None, ignoreEpoch = False):
         self.lastEpochNum = epoch
         hist = None
-        if epoch%self.everyNthEpoch == 0 or ignoreEpoch:
+        if (self.everyNthEpoch > 0 and epoch%self.everyNthEpoch == 0) or ignoreEpoch:
             hist={}
             if self.verbose: print("Additional test datasets (epoch %d): "%(epoch+1))
             # evaluate on the additional validation sets
@@ -375,13 +375,13 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                     outStr.append("%s: %.4f"%("%%%ds"%self.printWidths[i]%valuename, result))
                     hist[validation_set_name + "_" + valuename] = result
                 outStr.append("")
-                outStr.insert(0, "   %%%ds: %3.0f"%(self.maxLenNames, toc("kl234hlkjsfkjh1hlkjhasfdkjlh"))%validation_set_name)
+                outStr.insert(0, "   %%%ds  - %3.0fs - "%(self.maxLenNames, toc("kl234hlkjsfkjh1hlkjhasfdkjlh"))%validation_set_name)
                 if self.verbose: print("".join(outStr))
             if self.verbose: print("")
         self.history.append(hist)
 
     def on_train_end(self, logs=None):
-        self.on_epoch_end(self.lastEpochNum, logs=logs, ignoreEpoch = True)
+        self.on_epoch_end(self.lastEpochNum, logs = logs, ignoreEpoch = True)
 
 class PeakBot():
     def __init__(self, name, ):
@@ -573,7 +573,7 @@ class PeakBot():
 
 
 @timeit
-def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInstancesPath = None, addValidationInstances = None, everyNthEpoch = 15, verbose = False):
+def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInstancesPath = None, addValidationInstances = None, everyNthEpoch = -1, verbose = False):
     tic("pbTrainNewModel")
 
     ## name new model

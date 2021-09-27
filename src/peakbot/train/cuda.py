@@ -357,9 +357,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
             oMZShift = 0 #xoroshiro128p_uniform_float32(rng_states, lInd) * 5 - 2.5
             for populationInd in range(0, math.ceil(xoroshiro128p_uniform_float32(rng_states, lInd)*maxPopulation)):
                 ind         = -1
-                shiftRT     =  0
                 centerRT    =  0
-                centerMZ    =  0
                 mzLow       =  0
                 mzHigh      =  0
                 mpRT        =  0
@@ -368,8 +366,8 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                 mpRTRight   =  0
                 mpMZLow     =  0
                 mpMZHigh    =  0
-                mpCentRTInd = 0
-                mpCentMZInd = 0
+                mpCentRTInd =  0
+                mpCentMZInd =  0
                 mpCentInt   =  0
                 typR        = -1
                 typ         = -1  #[isFullPeak, hasCoelutingPeaksBothSides, hasCoelutingPeakLeft, hasCoelutingPeakRight, isBackground, isWall]
@@ -447,10 +445,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
                         mzLow    = (peaks[sind, 1] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
                         mzHigh   = (peaks[sind, 1] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
-
                         crtDiff  = mpRT - peaks[sind, 0]
-                        cmzDiff  = mpMZ - peaks[sind, 1]
-                        centerMZ = peaks[sind, 1] + mzOffset
 
                     ## Wall
                     elif typR == 4:
@@ -462,9 +457,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mzLow    = (walls[sind, 0] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
                         mzHigh   = (walls[sind, 0] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
 
-                        cmzDiff  = mpMZ - walls[sind, 0]
-                        centerMZ = walls[sind, 0] + mzOffset
-
                     ## Background
                     elif typR == 5:
                         sind     = round(xoroshiro128p_uniform_float32(rng_states, lInd)*backgrounds.shape[0])
@@ -475,9 +467,6 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         devMult  = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
                         mzLow    = (backgrounds[sind, 1] - mzOffset) * (1 - mzDevPPM * devMult / 2 / 1E6)
                         mzHigh   = (backgrounds[sind, 1] - mzOffset) * (1 + mzDevPPM * devMult / 2 / 1E6)
-
-                        cmzDiff  = mpMZ - backgrounds[sind, 1]
-                        centerMZ = backgrounds[sind, 1] + mzOffset
 
                     ## unknown class
                     else:
@@ -510,8 +499,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         areaRTs[instanceInd, x] = areaTimes[x]
                     for y in range(mzSlices):
                         if temp[0,x,y] > 0:
-                            a = instances[instanceInd,x,y] + (temp[0,x,y] / maxInt * (1 + xoroshiro128p_uniform_float32(rng_states, lInd)*randomnessFactor - randomnessFactor/2) * r)
-                            temp[0,x,y] = a
+                            temp[0,x,y] = instances[instanceInd,x,y] + (temp[0,x,y] / maxInt * (1 + xoroshiro128p_uniform_float32(rng_states, lInd)*randomnessFactor - randomnessFactor/2) * r)
                 ## only use distraction if the center is not too much hidden from it (at least 10 times as intensive)
                 if populationInd == 0 or (temp[0,mpCentRTInd,mpCentMZInd]-mpCentInt) < mpCentInt/10:
                     for x in range(rtSlices):
