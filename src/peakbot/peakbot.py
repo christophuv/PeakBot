@@ -1151,6 +1151,8 @@ def exportLocalMaximaAsTSV(foutFile, peaks):
             fout.write("\t".join((str(s) for s in [j, peaks[j,2], peaks[j,3], peaks[j,8], peaks[j,11], peaks[j,5]])))
             fout.write("\n")
 def showSummaryPlots(peaks, maximaProps, maximaPropsAll, polarity, highlights = None):
+    import matplotlib.pyplot as plt
+
     tic()
     print("Feature map of all local maxima (grey) and local maxima with peak like shapes")
     plt.scatter(maximaPropsAll[:,2], maximaPropsAll[:,3], color="slategrey")
