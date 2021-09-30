@@ -1,11 +1,12 @@
-from distutils.core import setup
+#from distutils.core import setup
+from setuptools import setup, find_packages
 
 setup(
     name='peakbot',
     version='0.4.6',
     author='Christoph Bueschl',
     author_email='christoph.bueschl [the little email symbol] univie.ac.at',
-    packages=['peakbot', 'peakbot.train'],
+    packages=find_packages(),#['peakbot', 'peakbot.train'],
     url='https://github.com/christophuv/PeakBot',
     license='LICENSE',
     description='A machine-learning CNN model for peak picking in profile mode LC-HRMS data',
