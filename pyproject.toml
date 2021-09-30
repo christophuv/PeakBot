@@ -20,17 +20,5 @@ author-email = "christoph.bueschl [the little e-mail-symbol] univie.ac.at"
 
 [build-system]
 requires-python=">=3.8.10"
-requires = [
-    "tensorflow>=2.4.1",
-    "numba>=0.53.1",
-    "pandas>=1.2.3",
-    "matplotlib>=3.4.2",
-    "plotnine>=0.8.0",
-    
-    "pymzml", 
-    
-    "tqdm>=4.61.2",
-    "natsort>=7.1.1",    
-    "py-cpuinfo>=8.0.0"
-]
+requires = []
 build-backend = "setuptools.build_meta"
