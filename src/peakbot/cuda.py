@@ -373,7 +373,7 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
                 run = 0
         inflLeftOffset = leftOffset
         run = 1
-        while run and leftOffset+1 < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0 and leftOffset+1 <= inflLeftOffset*4:
+        while run and leftOffset+1 < eicWindowPlusMinus*_extend and (a - leftOffset - 1) >= 0 and (e - leftOffset - 1) >= 0:
             ratioBA = 0
             if eicSmoothed[a] > 0:
                 ratioBA = eicSmoothed[a - leftOffset - 1] / eicSmoothed[a]
@@ -398,7 +398,7 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
                 run = 0
         inflRightOffset = rightOffset
         run = 1
-        while run and rightOffset+1 < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow and rightOffset+1 <= inflRightOffset*4:
+        while run and rightOffset+1 < eicWindowPlusMinus*_extend and (a + rightOffset + 1) < _EICWindowSmoothed and (e + rightOffset + 1) <= _EICWindow:
             ratioBA = 0
             if eicSmoothed[a] > 0:
                 ratioBA = eicSmoothed[a + rightOffset + 1] / eicSmoothed[a]
@@ -438,7 +438,6 @@ def initializeCUDAFunctions(gdMZminRatio = 0.1, gdRTminRatio = 0.01, eicWindowPl
                     infRatioCount += 1
             testInd = testInd - 1
         
-
         signalProps[7] = minWidth <= peakWidth <= maxWidth and ints[scanInd, peakInd] >= minimumIntensity and (ratio >= minRatioFactor or infRatioCount > 3) and eicRatio > 3
     global _gradientDescendRTPeak_kernel
     _gradientDescendRTPeak_kernel = cuda.jit(device=True)(_gradientDescendRTPeak)

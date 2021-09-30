@@ -6,8 +6,6 @@ author-email = "christoph.bueschl [the little e-mail-symbol] univie.ac.at"
 [build-system]
 requires-python=">=3.8.10"
 requires = [
-    "numpy>=1.20.1",
-    "scipy>=1.6.1",
     "tensorflow>=2.4.1",
     "numba>=0.53.1",
     "pandas>=1.2.3",
