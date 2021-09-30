@@ -15,28 +15,38 @@ The CNN model is implemented in the TensorFlow package (https://www.tensorflow.o
 ## Run PeakBox
 Several options are available to use PeakBot. The recommended one is a virtual environment with Anaconda. 
 
+### GPU support
+PeakBot uses the graphics processing unit of the PC for computational intensive tasks such as the generation of the large training dataset or the training of the CNN model. Thus, it requires a CUDA-enabled graphics card as well as the CUDA tookit and the cuDNN libraries to be installed. For further information about these packages please consult the official documentation of Nvidia at https://developer.nvidia.com/cuda-downloads, https://developer.nvidia.com/cudnn and https://docs.nvidia.com/deeplearning/cudnn/install-guide/index.html. 
+
+#### Windows 10
+On Windows 10 and newer the installation requires some additional steps. First, download the CUDA 11.2 toolbox and the cudnn 11.2 library from Nvidia and install them. Then start Nsight Monitor and enter the settings. There either disable the WDMM TDR or increase the delay to at least 30 seconds (depending on the used GPU).
+Detailed instructions about the installation and configuration steps can be found at https://spltech.co.uk/how-to-install-tensorflow-2-5-with-cuda-11-2-and-cudnn-8-1-for-windows-10/ and https://docs.nvidia.com/gameworks/content/developertools/desktop/timeout_detection_recovery.htm. 
+
+#### Linux 
+
+
 ### Install in a new conda virtual environment
 
-1. Make sure that you have Anaconda installed or install it from https://www.anaconda.com/.
-2. On Windows: start an Anaconda shell from the start menu
-3. Create a new conda virtual environment and activate it with the following commands:
+- Make sure that you have Anaconda installed or install it from https://www.anaconda.com/.
+- On Windows: start an Anaconda shell from the start menu
+- Create a new conda virtual environment and activate it with the following commands:
 
 ```
 conda create -n python3.8 python=3.8
 conda activate python3.8
 ```
-4. Install the PeakBot framework with the command:
+- Optional on Linux: Install GPU support with the command
+
+```
+conda install tensorflow-gpu
+```
+
+- Install the PeakBot framework with the command:
 
 ```
 pip install git+https://github.com/christophuv/PeakBot
 ```
 
-### GPU support
-PeakBot uses the graphics processing unit of the PC for computational intensive tasks such as the generation of the large training dataset or the training of the CNN model. Thus, it requires a CUDA-enabled graphics card as well as the CUDA tookit and the cuDNN libraries to be installed. For further information about these packages please consult the official documentation of Nvidia at https://developer.nvidia.com/cuda-downloads and https://developer.nvidia.com/cudnn. 
-
-#### Windows 10
-On Windows 10 and newer the installation requires some additional steps. First, download the CUDA 11.2 toolbox and the cudnn 11.2 library from Nvidia and install them. Then start Nsight Monitor and enter the settings. There either disable the WDMM TDR or increase the delay to at least 30 seconds (depending on the used GPU).
-Detailed instructions about the installation and configuration steps can be found at https://spltech.co.uk/how-to-install-tensorflow-2-5-with-cuda-11-2-and-cudnn-8-1-for-windows-10/ and https://docs.nvidia.com/gameworks/content/developertools/desktop/timeout_detection_recovery.htm. 
 
 ## Examples
 Examples to train a new PeakBot-CNN model and to subsequently use if for the detection of new chromatographic peaks in other LC-HRMS chromatograms are available at [https://github.com/christophuv/PeakBot_Example](https://github.com/christophuv/PeakBot_Example)
