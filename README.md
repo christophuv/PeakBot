@@ -16,12 +16,21 @@ The CNN model is implemented in the TensorFlow package (https://www.tensorflow.o
 Several options are available to use PeakBot. The recommended one is a virtual environment with Anaconda. 
 
 ### Install in a new conda virtual environment
-Make sure that you have Anaconda installed or install it from https://www.anaconda.com/.
-Create a new conda virtual environment and activate it with the following commands:
+
+1. Make sure that you have Anaconda installed or install it from https://www.anaconda.com/.
+2. On Windows: start an Anaconda shell from the start menu
+3. Create a new conda virtual environment and activate it with the following commands:
+
 ```
 conda create -n python3.8 python=3.8
 conda activate python3.8
 ```
+4. Install the PeakBot framework with the command:
+
+```
+pip install git+https://github.com/christophuv/PeakBot
+```
+
 ### GPU support
 PeakBot uses the graphics processing unit of the PC for computational intensive tasks such as the generation of the large training dataset or the training of the CNN model. Thus, it requires a CUDA-enabled graphics card as well as the CUDA tookit and the cuDNN libraries to be installed. For further information about these packages please consult the official documentation of Nvidia at https://developer.nvidia.com/cuda-downloads and https://developer.nvidia.com/cudnn. 
 
