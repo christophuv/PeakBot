@@ -5,7 +5,7 @@ setup(
     version='0.4.6',
     author='Christoph Bueschl',
     author_email='christoph.bueschl [the little email symbol] univie.ac.at',
-    packages=['peakbot'],
+    packages=['peakbot', 'peakbot.train'],
     url='https://github.com/christophuv/PeakBot',
     license='LICENSE',
     description='A machine-learning CNN model for peak picking in profile mode LC-HRMS data',
