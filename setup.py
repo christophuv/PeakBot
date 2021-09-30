@@ -21,6 +21,7 @@ setup(
 
         "tqdm >= 4.61.2",
         "natsort >= 7.1.1",    
-        "py-cpuinfo >= 8.0.0"
+        "py-cpuinfo >= 8.0.0",
+        "psutil"
     ],
 )
