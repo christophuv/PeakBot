@@ -703,7 +703,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         print("  | .. with the current values of blockdim (%d) and griddim (%d) %d samples will be generated on the GPU"%(blockdim, griddim, genSamples))
         print("  | .. size of the necessary objects is %5.1f Mb (and some more local memory is required by the kernels)"%((instances.nbytes+areaRTs.nbytes+areaMZs.nbytes+peakTypes.nbytes+centers.nbytes+boxes.nbytes)/1E6))
         print("  | .. some more instances than specified by the parameters will be generated. Rounding (ceiling) causes this.")
-        print("  | .. Attention: On some operating systems (e.g., Windows 10) the operating system might be unresponsive for several seconds.")
+        print("  | .. Attention: The Windows operating system might fail here. This happens when the GPU calculations exceed 2 seconds (default).")
+        print("  | ..            Should this happen, please have a look on the PeakBot homepage (https://github.com/christophuv/PeakBot) to see how to fix it.")
+        print("  | .. Attention: Some operating systems (e.g., Windows 10) might be unresponsive for several seconds until this process has completed.")
         print("  | ..            This is normal behaviour since priority is given to the GPU calculations rather than the display update of the operating system.")
         print("  | ")
     outVal = 0
