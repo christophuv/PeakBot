@@ -4,7 +4,7 @@ from collections import OrderedDict
 import csv
 import time
 import datetime
-import os
+import natsort
 
 ## General functions
 #Function statistics and runtime
@@ -89,7 +89,7 @@ class TabLog(metaclass = Singleton):
     def addSeparator(self):
         self.instanceOrder.append("-!$& separator")
 
-    def print(self):
+    def print(self, sortby = None, reverse = False):
         widths = {}
         leI = len("Instance")
         for i in self.instanceOrder:
@@ -114,7 +114,13 @@ class TabLog(metaclass = Singleton):
             print("-%s-+"%("-"*widths[k]), end="")
         print("")
 
-        for ind, i in enumerate(self.instanceOrder):
+        a = [i for i in self.instanceOrder]
+        if sortby != None:
+            a = natsort.natsorted(a, key=lambda x: self.data[x][sortby])
+        if reverse:
+            a = reversed(a)
+
+        for ind, i in enumerate(a):
             if i == "-!$& separator":
                 print("%s--"%("-"*len(str(len(self.instanceOrder)))), end="")
                 print("%s-+"%("-"*leI), end="")

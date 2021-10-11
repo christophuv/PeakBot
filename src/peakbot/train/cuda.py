@@ -186,11 +186,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         ## copy to
         ## backgrounds: list of arrays with the elements:
         ##        rt, mz, mzdev
-
         oriRefBackgrounds = len(backgrounds)
         maximaPropsAll[:,7] = 0
-        for bgInd, background in enumerate(backgrounds):
-            background[0]=0
+        for background in backgrounds:
             crts = maximaPropsAll[:,2]
             cmzs = maximaPropsAll[:,3]
             maximaPropsAll[:,7] = np.logical_or(maximaPropsAll[:,7]==0, np.logical_and(np.logical_and(background[0] <= crts, crts <= background[1]), np.logical_and(background[2] <= cmzs, cmzs <= background[3])))
@@ -336,9 +334,9 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
         ## Classes of training instances
         ## Main classes 0.. single isomer, 1.. isomer with left and right overlapping elutions, 2.. isomer with left overlapping elution, 3.. isomer with right overlapping elution, 4.. wall, 5.. background
-        rClass = cuda.local.array(shape = (8), dtype=numba.float32)
+        rClass = cuda.local.array(shape = (6), dtype=numba.float32)
         rClass[0] = 0; rClass[1] = 1; rClass[2] = 2; rClass[3] = 3;
-        rClass[4] = 4; rClass[5] = 1; rClass[6] = 1; rClass[7] = 4;
+        rClass[4] = 4; rClass[7] = 5;
         ## Distraction classes
         dClass = cuda.local.array(shape = (4), dtype=numba.float32)
         dClass[0] = 0; dClass[1] = 0; dClass[2] = 4; dClass[3] = 4;
@@ -355,11 +353,14 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
         for instanceInd in range(lInd, instances.shape[0], lLen):
             oRTShift = 0 #xoroshiro128p_uniform_float32(rng_states, lInd) * 2 * rtSlices/16 - (rtSlices/16)
             oMZShift = 0 #xoroshiro128p_uniform_float32(rng_states, lInd) * 5 - 2.5
-            for populationInd in range(0, math.ceil(xoroshiro128p_uniform_float32(rng_states, lInd)*maxPopulation)):
+            populationInd = 0
+            tempCPopMax = math.ceil(xoroshiro128p_uniform_float32(rng_states, lInd)*maxPopulation)
+            while populationInd < tempCPopMax:
                 ind         = -1
                 centerRT    =  0
                 mzLow       =  0
                 mzHigh      =  0
+                mpTyp       = -1
                 mpRT        =  0
                 mpMZ        =  0
                 mpRTLeft    =  0
@@ -385,6 +386,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mzDevPPM  = peaks[ind, 4]
                         devMult   = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
 
+                        mpTyp     = 0
                         mpRT      = peaks[ind, 0]
                         mpMZ      = peaks[ind, 1]
                         mpRTLeft  = peaks[ind, 2]
@@ -401,6 +403,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mzDevPPM  = walls[ind, 3]
                         devMult   = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
 
+                        mpTyp     = 4
                         mpRT      = centerRT
                         mpMZ      = walls[ind,0]
                         mpRTLeft  = walls[ind,1]
@@ -417,6 +420,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         mzDevPPM  = backgrounds[ind, 2]
                         devMult   = 3 + xoroshiro128p_uniform_float32(rng_states, lInd)*2-1
 
+                        mpTyp     = 5
                         mpRT      = backgrounds[ind, 0]
                         mpMZ      = backgrounds[ind, 1]
                         mpRTLeft  = backgrounds[ind, 0] - (xoroshiro128p_uniform_float32(rng_states, lInd)*4+1) * meanDifferenceScans
@@ -634,6 +638,7 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
 
                 ## Update center parameters
                 if populationInd == 0:
+                    mpTyp = typ
                     peakTypes[instanceInd, typ] = 1
 
                     if typ < 4:
@@ -651,6 +656,11 @@ def generateTestInstances(mzxml, fileIdentifier, peaks, walls, backgrounds, nTes
                         boxes[instanceInd, 1]   = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(rtSlices))
                         boxes[instanceInd, 2]   = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(mzSlices))
                         boxes[instanceInd, 3]   = round(xoroshiro128p_uniform_float32(rng_states, lInd)*(mzSlices))
+                    
+                    if mpTyp == 5 and populationInd > 1:
+                        populationInd = 1E5
+                
+                populationInd = populationInd + 1
 
             ## Scale to a maximum intensity of 1
             mVal = 0
