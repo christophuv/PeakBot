@@ -12,7 +12,7 @@ setup(
     description='A machine-learning CNN model for peak picking in profile mode LC-HRMS data',
     long_description=open('README.md').read(),
     install_requires=[
-        "tensorflow == 2.4.1",
+        "tensorflow == 2.5.0",
         "numba == 0.53.1",
         "pandas == 1.2.3",
         "matplotlib >= 3.4.2",
