@@ -13,8 +13,8 @@ setup(
     long_description=open('README.md').read(),
     install_requires=[
         "tensorflow == 2.4.1",
-        "numba >= 0.53.1",
-        "pandas >= 1.2.3",
+        "numba == 0.53.1",
+        "pandas == 1.2.3",
         "matplotlib >= 3.4.2",
         "plotnine >= 0.8.0",
 
