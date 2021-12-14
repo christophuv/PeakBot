@@ -39,6 +39,7 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 ```
     conda install git
     conda install cudnn==8.2.1
+    conda install -c anaconda urllib3
 ```
 
 7. Install the PeakBot framework with the command:
