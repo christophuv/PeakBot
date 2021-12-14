@@ -48,7 +48,7 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
     pip install git+https://github.com/christophuv/PeakBot
 ```
 
-8. Fix for newer CUDA dlls. Copy the file 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.2\bin\cusolver64_11.dll' to 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.2\bin\cusolver64_10.dll'. 
+8. Fix for newer CUDA dlls. Copy the file "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.2\bin\cusolver64_11.dll" to "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.2\bin\cusolver64_10.dll". (Fix by https://stackoverflow.com/a/65608751).
 
 
 9. Optional: Download a sample file and run it. For this, navigate to a new directory in the command prompt and enter the commands: 
