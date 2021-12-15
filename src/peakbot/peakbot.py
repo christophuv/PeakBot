@@ -54,7 +54,7 @@ class Config(object):
             " Version " + Config.VERSION,
             " Size of LC-HRMS area: %d x %d (rts x mzs)"%(Config.RTSLICES, Config.MZSLICES),
             " Number of peak-classes: %d"%(Config.NUMCLASSES),
-            " Batchsize: %d, Epochs %d, StepsPerEpoc: %d"%(Config.BATCHSIZE, Config.EPOCHS, Config.STEPSPEREPOCH),
+            " Batchsize: %d, Epochs %d, StepsPerEpoch: %d"%(Config.BATCHSIZE, Config.EPOCHS, Config.STEPSPEREPOCH),
             " DropOutRate: %g"%(Config.DROPOUT),
             " UNetLayerSizes: %s"%(Config.UNETLAYERSIZES),
             " LearningRate: Start: %g, DecreaseAfter: %d steps, Multiplier: %g, min. rate: %g"%(Config.LEARNINGRATESTART, Config.LEARNINGRATEDECREASEAFTERSTEPS, Config.LEARNINGRATEMULTIPLIER, Config.LEARNINGRATEMINVALUE),
@@ -69,7 +69,7 @@ class Config(object):
             "Version " + Config.VERSION,
             "Size of LC-HRMS area: %d x %d (rts x mzs)"%(Config.RTSLICES, Config.MZSLICES),
             "Number of peak-classes: %d"%(Config.NUMCLASSES),
-            "Batchsize: %d, Epochs %d, StepsPerEpoc: %d"%(Config.BATCHSIZE, Config.EPOCHS, Config.STEPSPEREPOCH),
+            "Batchsize: %d, Epochs %d, StepsPerEpoch: %d"%(Config.BATCHSIZE, Config.EPOCHS, Config.STEPSPEREPOCH),
             "DropOutRate: %g"%(Config.DROPOUT),
             "UNetLayerSizes: %s"%(Config.UNETLAYERSIZES),
             "LearningRate: Start: %g, DecreaseAfter: %d steps, Multiplier: %g, min. rate: %g"%(Config.LEARNINGRATESTART, Config.LEARNINGRATEDECREASEAFTERSTEPS, Config.LEARNINGRATEMULTIPLIER, Config.LEARNINGRATEMINVALUE),
@@ -682,11 +682,19 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
 
 
 
+def loadModelFile(modelPath):
+
+    model = tf.keras.models.load_model(modelPath, custom_objects = {"iou": iou,"recall": recall,
+                                                                    "precision": precision, "specificity": specificity,
+                                                                    "negative_predictive_value": negative_predictive_value,
+                                                                    "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR})
+
+    return model
 
 
 
 @timeit
-def runPeakBot(pathFrom, modelPath, verbose = True):
+def runPeakBot(pathFrom, modelPath = None, model = None, verbose = True):
     tic("detecting with peakbot")
 
     peaks = []
@@ -698,16 +706,17 @@ def runPeakBot(pathFrom, modelPath, verbose = True):
     debugPrinted = 0
     if verbose:
         print("Detecting peaks with PeakBot")
-        print("  | .. loading PeakBot model '%s'"%(modelPath))
+        if model is not None:
+            print("  | .. model object provided by the user")
+        if model is None and modelPath is not None:
+            print("  | .. loading PeakBot model '%s'"%(modelPath))
         print("  | .. detecting peaks in the areas in the folder '%s'"%(pathFrom))
-
-    model = tf.keras.models.load_model(modelPath, custom_objects = {"iou": iou,"recall": recall,
-                                                                    "precision": precision, "specificity": specificity,
-                                                                    "negative_predictive_value": negative_predictive_value,
-                                                                    "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR})
 
     allFiles = os.listdir(pathFrom)
     l = pickle.load(open(os.path.join(pathFrom, allFiles[0]), "rb"))
+
+    if model is None and modelPath is not None:
+        model = loadModelFile(modelPath)
 
     with tqdm.tqdm(total = l["LCHRMSArea"].shape[0] * len(allFiles), desc="  | .. detecting chromatographic peaks", unit="instances", disable=not verbose) as pbar:
 

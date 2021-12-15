@@ -78,17 +78,15 @@ def shuffleResults(exportPath, steps=1E5, samplesToExchange=50,
 
             for k in a.keys():
                 if isinstance(a[k], np.ndarray) and len(a[k].shape) == 2:
-                    a[k][beginA:(beginA + cExchange),:], b[k][beginB:(beginB + cExchange), :] = np.copy(b[k][beginB:(beginB + cExchange), :]), np.copy(a[k][beginA:(beginA + cExchange),:])
-
+                    a[k][beginA:(beginA + cExchange)]      , b[k][beginB:(beginB + cExchange)]       = np.copy(b[k][beginB:(beginB + cExchange)])      , np.copy(a[k][beginA:(beginA + cExchange)])
+                elif isinstance(a[k], np.ndarray) and len(a[k].shape) == 2:
+                    a[k][beginA:(beginA + cExchange),:]    , b[k][beginB:(beginB + cExchange),:]     = np.copy(b[k][beginB:(beginB + cExchange),:])    , np.copy(a[k][beginA:(beginA + cExchange),:])
                 elif isinstance(a[k], np.ndarray) and len(a[k].shape) == 3:
-                    a[k][beginA:(beginA + cExchange),:,:], b[k][beginB:(beginB + cExchange),:,:] = np.copy(b[k][beginB:(beginB + cExchange),:,:]), np.copy(a[k][beginA:(beginA + cExchange),:,:])
-
+                    a[k][beginA:(beginA + cExchange),:,:]  , b[k][beginB:(beginB + cExchange),:,:]   = np.copy(b[k][beginB:(beginB + cExchange),:,:])  , np.copy(a[k][beginA:(beginA + cExchange),:,:])
                 elif isinstance(a[k], np.ndarray) and len(a[k].shape) == 4:
                     a[k][beginA:(beginA + cExchange),:,:,:], b[k][beginB:(beginB + cExchange),:,:,:] = np.copy(b[k][beginB:(beginB + cExchange),:,:,:]), np.copy(a[k][beginA:(beginA + cExchange),:,:,:])
-
                 elif isinstance(a[k], list):
                     a[k][beginA:(beginA + cExchange)], b[k][beginB:(beginB + cExchange)] = b[k][beginB:(beginB + cExchange)], a[k][beginA:(beginA + cExchange)]
-
                 else:
                     assert False, "Unknown key in shuffling, aborting"
 
