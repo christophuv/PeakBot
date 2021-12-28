@@ -365,8 +365,11 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
                 file_writer = tf.summary.create_file_writer(self.logDir + "/" + validation_set_name)
                 for i, (metric, result) in enumerate(zip(self.model.metrics_names, results)):
                     valuename = "epoch_" + metric
-                    with file_writer.as_default():
-                        tf.summary.scalar(valuename, data=result, step=epoch)
+                    try:
+                        with file_writer.as_default():
+                            tf.summary.scalar(valuename, data=result, step=epoch)
+                    except Exception:
+                        print("Cannot write scalar to tensorboard. Try installing TensorBoard (command: pip install tensorboard)")
                     if i > 0: outStr.append(", ")
                     valuename = metric
                     if i not in self.printWidths.keys():
