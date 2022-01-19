@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='peakbot',
-    version='0.4.6',
+    version='0.5.0',
     author='Christoph Bueschl',
     author_email='christoph.bueschl [the little email symbol] univie.ac.at',
     packages=find_packages(),#['peakbot', 'peakbot.train'],
@@ -12,17 +12,24 @@ setup(
     description='A machine-learning CNN model for peak picking in profile mode LC-HRMS data',
     long_description=open('README.md').read(),
     install_requires=[
+        ## main libraries for machine learning related tasks
         "tensorflow == 2.5.0",
-        "numba == 0.53.1",
-        "pandas == 1.2.3",
-        "matplotlib >= 3.4.2",
-        "plotnine >= 0.8.0",
+        "tensorflow_addons == 0.15.0",
 
+        ## other main function libraries
+        "numpy == 1.19.5", 
+        "numba == 0.53.1",
+        "pandas",
+        "matplotlib",
+        "plotnine",
+
+        ## handling of LC-MS data
         "pymzml", 
 
-        "tqdm >= 4.61.2",
-        "natsort >= 7.1.1",    
-        "py-cpuinfo >= 8.0.0",
+        ## other libraries
+        "tqdm",
+        "natsort",    
+        "py-cpuinfo",
         "psutil"
     ],
 )
