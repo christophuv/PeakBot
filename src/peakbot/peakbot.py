@@ -42,7 +42,7 @@ class Config(object):
 
     LEARNINGRATESTART              = 0.005
     LEARNINGRATEDECREASEAFTERSTEPS = 5
-    LEARNINGRATEMULTIPLIER         = 0.9
+    LEARNINGRATEMULTIPLIER         = 0.96
     LEARNINGRATEMINVALUE           = 3e-7
 
     INSTANCEPREFIX = "___PBsample_"
@@ -275,6 +275,10 @@ def pTPR(y_true, y_pred):
 def pFPR(y_true, y_pred):
     return 1-precision(tf.cast(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS), tf.float32),
                        tf.cast(tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS), tf.float32))
+def PeakNopeakAccuracy(y_true, y_pred):
+    return tf.reduce_sum(tf.cast(
+                tf.math.equal(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS),
+                            tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS)), tf.int32)) / tf.shape(y_true)[0]
 
 
 
@@ -416,100 +420,67 @@ class PeakBot():
             print("  | ")
 
         ## Input: Only LC-HRMS area
-        input_ = tf.keras.Input(shape=(self.rts, self.mzs, 1), name="LCHRMSArea")
+        area = tf.keras.Input(shape=(self.rts, self.mzs, 1), name="LCHRMSArea")
         if verbose:
             print("  | .. Inputs")
-            print("  | .. .. LCHRMSArea is", input_)
+            print("  | .. .. LCHRMSArea is", area)
             print("  |")
 
-        ## Encoder
-        x = input_
-        cLayers = [x]
+        ## Convolutions
+        x = area
         for i in range(len(uNetLayerSizes)):
 
+            ## wider convolution
             x = tf.keras.layers.ZeroPadding2D(padding=2)(x)
-            x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (5,5), use_bias=True)(x)
+            x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (5,5), use_bias=False, activation="relu")(x)
             x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.Activation("relu")(x)
-
-            #x = tf.keras.layers.Dropout(dropOutRate)(x)
+            
+            ## narrower convolution
             x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
-            x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (3,3), use_bias=True)(x)
+            x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (3,3), use_bias=False, activation="relu")(x)
             x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.Activation("relu")(x)
 
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.MaxPool2D((2,2))(x)
-            cLayers.append(x)
-        lastUpLayer = x
+            ## pooling and dropout
+            x = tf.keras.layers.MaxPooling2D((2,2))(x)
+            x = tf.keras.layers.Dropout(dropOutRate)(x)
 
         ## Intermediate layer and feature properties (indices and borders)
         x = tf.keras.layers.BatchNormalization()(x)
-        fx          = tf.keras.layers.Flatten()(x)
-        peakType    = tf.keras.layers.Dense(self.numClasses, name="peakType", activation="sigmoid")(fx)
-        center      = tf.keras.layers.Dense(              2, name="center"  , activation="relu"   )(fx)
-        box         = tf.keras.layers.Dense(              4, name="box"     , activation="relu"   )(fx)
-
-        #tf.math.argmax(peakType, axis=1)
-        #b_broadcast = tf.zeros(tf.shape(center), dtype=center.dtype)
-        #center = tf.where(tf.greater(center, 3), b_broadcast, center)
-        #b_broadcast = tf.zeros(tf.shape(box), dtype=box.dtype)
-        #box = tf.where(tf.greater(box, 3), b_broadcast, box, name="box")
-
-
-        ### Decoder
-        #for i in range(len(uNetLayerSizes)-1, -1, -1):
-        #    x = tf.keras.layers.UpSampling2D((2,2))(x)
-        #    x = tf.concat([x, cLayers[i]], axis=3)
-        #    x = tf.keras.layers.ZeroPadding2D(padding=2)(x)
-        #    x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (5,5), use_bias=True)(x)
-        #    x = tf.keras.layers.BatchNormalization()(x)
-        #    x = tf.keras.layers.Activation("relu")(x)
-        #
-        #    x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
-        #    x = tf.keras.layers.Conv2D(uNetLayerSizes[i-1] if i > 0 else 1, (3,3), use_bias=True)(x)
-        #    x = tf.keras.layers.BatchNormalization()(x)
-        #    if i > 0:
-        #        x = tf.keras.layers.Add()([x, cLayers[i]])
-        #    x = tf.keras.layers.Activation("relu")(x)
-
-        #x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
-        #x = tf.keras.layers.Conv2D(1, (3,3))(x)
-        #x = tf.keras.layers.BatchNormalization()(x)
-
-        #x = tf.keras.layers.Activation("sigmoid", name="single")(x)
-        #single = x
+        x = tf.keras.layers.Flatten()(x)     
+        
+        ## Output layers
+        fx = x
+        peakType = tf.keras.layers.Dense(self.numClasses, name="peakType", activation="sigmoid")(fx)
+        center   = tf.keras.layers.Dense(              2, name="center"  , activation="relu"   )(fx)
+        box      = tf.keras.layers.Dense(              4, name="box"     , activation="relu"   )(fx)
 
         if verbose:
             print("  | .. Intermediate layer")
-            print("  | .. .. lastUpLayer is", lastUpLayer)
             print("  | .. .. fx          is", fx)
             print("  | .. ")
             print("  | .. Outputs")
             print("  | .. .. peak        is", peakType)
             print("  | .. .. center      is", center)
             print("  | .. .. box         is", box)
-            #print("  | .. .. single      is", single)
             print("  | .. ")
             print("  | ")
 
-        self.model = tf.keras.models.Model(input_, [peakType, center, box]) #, single])
+        self.model = tf.keras.models.Model(area, [peakType, center, box])
 
     @timeit
     def compileModel(self, learningRate = None):
         if learningRate is None:
             learningRate = Config.LEARNINGRATESTART
-        cce = tf.keras.losses.CategoricalCrossentropy()
+        
         self.model.compile(
             optimizer = tf.keras.optimizers.Adam(learning_rate=learningRate),
             loss         = {
                         "peakType" : "CategoricalCrossentropy",
                         "center"   : tf.keras.losses.Huber(),
                         "box"      : tf.keras.losses.Huber(),
-                        #"single"   : "MSE",
                       },
             metrics      = {
-                        "peakType" : ["categorical_accuracy", pF1, pTPR, pFPR],
+                        "peakType" : ["categorical_accuracy", pF1, pTPR, pFPR, PeakNopeakAccuracy],
                         "center"   : [],
                         "box"      : [iou],
                       },
@@ -517,7 +488,6 @@ class PeakBot():
                         "peakType" : 1,
                         "center"   : 1,
                         "box"      : 1,
-                        #"single"   : 1,
                       }
         )
 
@@ -662,7 +632,7 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         for valInstance in addValidationInstances:
 
             se = valInstance["name"]
-            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_iou"]:
+            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_iou", "peakType_PeakNopeakAccuracy"]:
                 val = hist[se + "_" + metric]
                 newRow = pd.Series({"model": modelName, "set": se, "metric": metric, "value": val})
                 metricesAddValDS = metricesAddValDS.append(newRow, ignore_index=True)
@@ -690,7 +660,7 @@ def loadModelFile(modelPath):
     model = tf.keras.models.load_model(modelPath, custom_objects = {"iou": iou,"recall": recall,
                                                                     "precision": precision, "specificity": specificity,
                                                                     "negative_predictive_value": negative_predictive_value,
-                                                                    "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR})
+                                                                    "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR, "PeakNopeakAccuracy": PeakNopeakAccuracy})
 
     return model
 
