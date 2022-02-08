@@ -1,0 +1,41 @@
+name: base
+channels:
+  - defaults
+dependencies:
+  - _libgcc_mutex=0.1=main
+  - brotlipy=0.7.0=py38h27cfd23_1003
+  - ca-certificates=2021.1.19=h06a4308_0
+  - certifi=2020.12.5=py38h06a4308_0
+  - cffi=1.14.4=py38h261ae71_0
+  - chardet=4.0.0=py38h06a4308_1003
+  - conda=4.9.2=py38h06a4308_0
+  - conda-package-handling=1.7.2=py38h03888b9_0
+  - cryptography=3.3.1=py38h3c74f83_0
+  - idna=2.10=pyhd3eb1b0_0
+  - ld_impl_linux-64=2.33.1=h53a641e_7
+  - libedit=3.1.20191231=h14c3975_1
+  - libffi=3.3=he6710b0_2
+  - libgcc-ng=9.1.0=hdf63c60_0
+  - libstdcxx-ng=9.1.0=hdf63c60_0
+  - ncurses=6.2=he6710b0_1
+  - openssl=1.1.1i=h27cfd23_0
+  - pip=20.3.3=py38h06a4308_0
+  - pycosat=0.6.3=py38h7b6447c_1
+  - pycparser=2.20=py_2
+  - pyopenssl=20.0.1=pyhd3eb1b0_1
+  - pysocks=1.7.1=py38h06a4308_0
+  - python=3.8.5=h7579374_1
+  - readline=8.1=h27cfd23_0
+  - requests=2.25.1=pyhd3eb1b0_0
+  - ruamel_yaml=0.15.87=py38h7b6447c_1
+  - setuptools=52.0.0=py38h06a4308_0
+  - six=1.15.0=py38h06a4308_0
+  - sqlite=3.33.0=h62c20be_0
+  - tk=8.6.10=hbc83047_0
+  - tqdm=4.56.0=pyhd3eb1b0_0
+  - urllib3=1.26.3=pyhd3eb1b0_0
+  - wheel=0.36.2=pyhd3eb1b0_0
+  - xz=5.2.5=h7b6447c_0
+  - yaml=0.2.5=h7b6447c_0
+  - zlib=1.2.11=h7b6447c_3
+prefix: /opt/conda

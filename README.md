@@ -24,23 +24,27 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 
 ### Windows 10
 1. Update your Nvidia GPU driver to the latest available. Driveras can be downloaded from https://www.nvidia.com/Download/index.aspx. 
+
 2. Increase the WDMM TDR (timeout for GPU refresh). This can be done via the Registry Editor. For this, plese press the Windows key and enter regedit. Do not start it, but right-click on the entry "Registry Editor" and start it as an administrator by clicking "Run as Administrator". Enter the credentials of your administrator account and start the Registry Editor. Navigate to the directory "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\GraphicsDrivers" and create the key "TdrLevel" as a REG_DWORD with the value 3. Add another key "TdrDelay" with the value 45. This will increase the timeout for the display refresh to 45 seconds. Then restart your system. More information about these to keys can be found at https://www.pugetsystems.com/labs/hpc/Working-around-TDR-in-Windows-for-a-better-GPU-computing-experience-777/ and https://msdn.microsoft.com/en-us/library/windows/hardware/ff569918(v=vs.85).aspx.
+
 3. Download and install Anaconda from https://www.anaconda.com. 
+
 4. Start the "Anaconda prompt" from the star menu. 
-5. Create a new conda virtual environment and activate it with the following commands:
+
+5. Create a new conda virtual environment and activate it with the one of the following commands depending whether or not you have a CUDA-enabled graphics card:
 
 ```
-    conda create -n python3.8 python=3.8
-    conda activate python3.8
+    ## With CUDA graphics card
+    conda env create --url https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Windows10_python38_withGPU.yml
+
+    ## or without CUDA graphics card
+    conda env create --url https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Windows10_python38_noGPU.yml
 ```
 
-6. Install some dependencies (Git, Cuda toolkit and cudnn libraries)
+6. Activate the new environment:
 
 ```
-    conda install git
-    conda install cudatoolkit==11.0.221
-    conda install cudnn==8.2.1
-    conda install -c anaconda urllib3
+    conda activate PeakBot
 ```
 
 7. Install the PeakBot framework with the command:
@@ -49,11 +53,16 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
     pip install git+https://github.com/christophuv/PeakBot
 ```
 
-8. Optional: Download a sample file and run it. For this, navigate to a new directory in the command prompt and enter the commands: 
+8. Optional: Download a sample file and run it with the one of the following commands depending whether or not you have a CUDA-enabled graphics card. For this, navigate to a new directory in the command prompt and enter the commands: 
 
 ```
-    curl https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample.py > quickExample.py
-    python quickExample.py
+    ## With GPU
+    curl https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample_GPU.py > quickExample_GPU.py
+    python quickExample_GPU.py
+
+    ## or without CUDA graphics card
+    curl https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample_CPU.py > quickExample_CPU.py
+    python quickExample_CPU.py
 ```
 
 
@@ -61,7 +70,7 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 1. Update your Nvidia GPU driver to the latest available. Drivers can be downloaded from https://www.nvidia.com/Download/index.aspx. 
 2. Install the Anaconda environment. Instructions are available at https://docs.anaconda.com/anaconda/install/linux/
 3. Start a bash-shell
-4. Install git via
+4. Install git via:
 
 ```
     sudo apt update
@@ -70,15 +79,17 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 5. Create a new conda virtual environment and activate it with the following commands:
 
 ```
-    conda create -n python3.8 python=3.8
-    conda activate python3.8
+    ## With CUDA graphics card
+    conda env create --url https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Debian11_python38_withGPU.yml
+
+    ## or without CUDA graphics card
+    conda env create --url https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Debian11_python38_noGPU.yml
 ```
 
-6. Install some dependencies (Git, Cuda toolkit and cudnn libraries)
+6. Activate the new environment:
 
 ```
-    conda install git
-    conda install cudnn==8.2.1
+    conda activate PeakBot
 ```
 
 7. Install the PeakBot framework with the command:
@@ -87,11 +98,16 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
     pip install git+https://github.com/christophuv/PeakBot
 ```
 
-8. Optional: Download a sample file and run it. For this, navigate to a new directory in the command prompt and enter the commands: 
+8. Optional: Download a sample file and run it with the one of the following commands depending whether or not you have a CUDA-enabled graphics card. For this, navigate to a new directory in the command prompt and enter the commands: 
 
 ```
-    wget https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample.py
-    python quickExample.py
+    ## With GPU
+    curl https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample_GPU.py > quickExample_GPU.py
+    python quickExample_GPU.py
+
+    ## or without CUDA graphics card
+    curl https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample_CPU.py > quickExample_CPU.py
+    python quickExample_CPU.py
 ```
 
 
