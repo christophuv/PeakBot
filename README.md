@@ -1,6 +1,6 @@
 # PeakBot
 
-PeakBot is a python framework for peak-picking in LC-HRMS profile mode data.
+PeakBot is a python package for peak-picking in LC-HRMS profile mode data.
 It uses local-maxima in the LC-HRMS dataset each of which is then exported as a standarized two-dimensional area (rt x mz), which is used as the input for a machine-learning CNN model that reports whether the local-maxima is a chromatographic peak with left/right isomeric compounds or a signal of the background. Moreover, for chromatographic peaks it suggests a bounding-box and a peak-center.
 
 ![Workflow of PeakBot](https://github.com/christophuv/PeakBot/raw/main/workflow.png)

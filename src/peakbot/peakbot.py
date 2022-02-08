@@ -1,4 +1,5 @@
 import logging
+from shutil import ignore_patterns
 
 from .core import tic, toc, tocAddStat, timeit, writeTSVFile
 
@@ -40,7 +41,7 @@ class Config(object):
     DROPOUT        = 0.2
     UNETLAYERSIZES = [32,64,128,256]
 
-    LEARNINGRATESTART              = 0.005
+    LEARNINGRATESTART              = 0.0005
     LEARNINGRATEDECREASEAFTERSTEPS = 5
     LEARNINGRATEMULTIPLIER         = 0.96
     LEARNINGRATEMINVALUE           = 3e-7
@@ -275,11 +276,22 @@ def pTPR(y_true, y_pred):
 def pFPR(y_true, y_pred):
     return 1-precision(tf.cast(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS), tf.float32),
                        tf.cast(tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS), tf.float32))
-def PeakNopeakAccuracy(y_true, y_pred):
-    return tf.reduce_sum(tf.cast(
-                tf.math.equal(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS),
-                            tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS)), tf.int32)) / tf.shape(y_true)[0]
+    
+class ACCPeakNopeak(tf.keras.metrics.Metric):
 
+    def __init__(self, name='ACCPeakNopeak', **kwargs):
+        super(ACCPeakNopeak, self).__init__(name=name, **kwargs)
+        self.correct = self.add_weight(name='correct', initializer='zeros', dtype=tf.float32)
+        self.counts = self.add_weight(name='counts', initializer='zeros', dtype=tf.float32)
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        self.correct.assign_add(tf.reduce_sum(tf.cast(tf.math.equal(tf.math.less(tf.math.argmax(y_true, axis=1), Config.FIRSTNAREPEAKS),tf.math.less(tf.math.argmax(y_pred, axis=1), Config.FIRSTNAREPEAKS)), dtype=tf.float32)))
+        self.counts.assign_add(tf.cast(tf.shape(y_true)[0], dtype=tf.float32))
+
+    def result(self):
+        temp = self.correct / self.counts
+        temp = tf.where(tf.math.is_nan(temp), tf.zeros_like(temp), temp)
+        return temp
 
 
 
@@ -387,6 +399,9 @@ class AdditionalValidationSets(tf.keras.callbacks.Callback):
             if self.verbose: print("")
         self.history.append(hist)
 
+    def on_train_begin(self, logs=None):
+        self.on_epoch_end(0, logs = logs, ignoreEpoch = True)
+
     def on_train_end(self, logs=None):
         self.on_epoch_end(self.lastEpochNum, logs = logs, ignoreEpoch = True)
 
@@ -433,12 +448,12 @@ class PeakBot():
             ## wider convolution
             x = tf.keras.layers.ZeroPadding2D(padding=2)(x)
             x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (5,5), use_bias=False, activation="relu")(x)
-            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.BatchNormalization(scale=False)(x)
             
             ## narrower convolution
             x = tf.keras.layers.ZeroPadding2D(padding=1)(x)
             x = tf.keras.layers.Conv2D(uNetLayerSizes[i], (3,3), use_bias=False, activation="relu")(x)
-            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.BatchNormalization(scale=False)(x)
 
             ## pooling and dropout
             x = tf.keras.layers.MaxPooling2D((2,2))(x)
@@ -480,14 +495,14 @@ class PeakBot():
                         "box"      : tf.keras.losses.Huber(),
                       },
             metrics      = {
-                        "peakType" : ["categorical_accuracy", pF1, pTPR, pFPR, PeakNopeakAccuracy],
+                        "peakType" : ["categorical_accuracy", pF1, pTPR, pFPR, ACCPeakNopeak()],
                         "center"   : [],
                         "box"      : [iou],
                       },
             loss_weights = {
                         "peakType" : 1,
-                        "center"   : 1,
-                        "box"      : 1,
+                        "center"   : 1/25,
+                        "box"      : 1/25,
                       }
         )
 
@@ -632,7 +647,7 @@ def trainPeakBotModel(trainInstancesPath, logBaseDir, modelName = None, valInsta
         for valInstance in addValidationInstances:
 
             se = valInstance["name"]
-            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_iou", "peakType_PeakNopeakAccuracy"]:
+            for metric in ["loss", "peakType_loss", "center_loss", "box_loss", "peakType_categorical_accuracy", "peakType_pF1", "peakType_pTPR", "peakType_pFPR", "box_iou", "peakType_ACCPeakNopeak"]:
                 val = hist[se + "_" + metric]
                 newRow = pd.Series({"model": modelName, "set": se, "metric": metric, "value": val})
                 metricesAddValDS = metricesAddValDS.append(newRow, ignore_index=True)
@@ -660,7 +675,7 @@ def loadModelFile(modelPath):
     model = tf.keras.models.load_model(modelPath, custom_objects = {"iou": iou,"recall": recall,
                                                                     "precision": precision, "specificity": specificity,
                                                                     "negative_predictive_value": negative_predictive_value,
-                                                                    "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR, "PeakNopeakAccuracy": PeakNopeakAccuracy})
+                                                                    "f1": f1, "pF1": pF1, "pTPR": pTPR, "pFPR": pFPR, "ACCPeakNopeak": ACCPeakNopeak})
 
     return model
 
