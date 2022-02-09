@@ -35,10 +35,12 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 
 ```
     ## With CUDA graphics card
-    conda env create --file https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Windows10_python38_withGPU.yml
+    curl https://raw.githubusercontent.com/christophuv/PeakBot/main/AnacondaEnvironment/Windows10_python38_withGPU.yml > Windows10_python38_withGPU.yml
+    conda env create --file Windows10_python38_withGPU.yml
 
     ## or without CUDA graphics card
-    conda env create --file https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Windows10_python38_noGPU.yml
+    curl https://raw.githubusercontent.com/christophuv/PeakBot/main/AnacondaEnvironment/Windows10_python38_noGPU.yml > Windows10_python38_noGPU.yml
+    conda env create --file Windows10_python38_noGPU.yml
 ```
 
 6. Activate the new environment:
@@ -80,10 +82,12 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 
 ```
     ## With CUDA graphics card
-    conda env create --file https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Debian11_python38_withGPU.yml
+    curl https://raw.githubusercontent.com/christophuv/PeakBot/main/AnacondaEnvironment/Debian11_python38_withGPU.yml > Debian11_python38_withGPU.yml
+    conda env create --file Debian11_python38_withGPU.yml
 
     ## or without CUDA graphics card
-    conda env create --file https://github.com/christophuv/PeakBot/raw/main/AnacondaEnvironment/Debian11_python38_noGPU.yml
+    curl https://raw.githubusercontent.com/christophuv/PeakBot/main/AnacondaEnvironment/Debian11_python38_noGPU.yml > Debian11_python38_noGPU.yml
+    conda env create --file Debian11_python38_noGPU.yml
 ```
 
 6. Activate the new environment:
