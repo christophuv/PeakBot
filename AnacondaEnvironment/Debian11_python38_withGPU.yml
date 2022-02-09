@@ -57,7 +57,6 @@ dependencies:
     - palettable==3.3.0
     - pandas==1.4.0
     - patsy==0.5.2
-    - peakbot==0.5.0
     - pillow==9.0.1
     - plotnine==0.8.0
     - protobuf==3.19.4
