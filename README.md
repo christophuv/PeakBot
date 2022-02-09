@@ -56,7 +56,7 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 8. Optional: Download a sample file and run it with the one of the following commands depending whether or not you have a CUDA-enabled graphics card. For this, navigate to a new directory in the command prompt and enter the commands: 
 
 ```
-    ## With GPU
+    ## With CUDA graphics card
     curl https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample_GPU.py > quickExample_GPU.py
     python quickExample_GPU.py
 
@@ -101,7 +101,7 @@ Note: If an exportBatchSize of 2048 requires some 4GB of GPU-memory. If you have
 8. Optional: Download a sample file and run it with the one of the following commands depending whether or not you have a CUDA-enabled graphics card. For this, navigate to a new directory in the command prompt and enter the commands: 
 
 ```
-    ## With GPU
+    ## With CUDA graphics card
     curl https://raw.githubusercontent.com/christophuv/PeakBot_Example/main/quickExample_GPU.py > quickExample_GPU.py
     python quickExample_GPU.py
 
